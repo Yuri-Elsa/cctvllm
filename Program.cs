@@ -14,16 +14,26 @@ builder.Services.AddControllersWithViews().AddRazorOptions(options => {
 builder.Services.AddSingleton<QueueStore>();
 builder.Services.AddSingleton<VideoTools>();
 builder.Services.AddHttpClient("model", c => c.Timeout = TimeSpan.FromMinutes(15));
+builder.Services.AddOptions<NotificationOptions>();
+builder.Services.AddHttpClient<WebhookNotifier>();
+builder.Services.AddSingleton<INotifier>(sp => sp.GetRequiredService<WebhookNotifier>());
+builder.Services.AddSingleton<INotifier, EmailNotifier>();
+builder.Services.AddSingleton<INotifier, LogNotifier>();
+builder.Services.AddSingleton<INotificationResultSink, QueueNotificationSink>();
+builder.Services.AddSingleton<NotificationDispatcher>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<NotificationDispatcher>());
 builder.Services.AddSingleton<DescriptionWorker>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DescriptionWorker>());
 var app = builder.Build();
 app.Use(async (ctx, next) => {
     if (ctx.Request.Method != "GET" && ctx.Request.Method != "HEAD" &&
-        ctx.Request.Headers.Origin.Count > 0 && ctx.Request.Headers.Origin != $"{ctx.Request.Scheme}://{ctx.Request.Host}") {
+        ctx.Request.Headers.Origin.Count > 0 && ctx.Request.Headers.Origin != $"{ctx.Request.Scheme}://{ctx.Request.Host}")
+    {
         ctx.Response.StatusCode = 403; await ctx.Response.WriteAsJsonAsync(new { detail = "Cross-origin requests are not allowed." }); return;
     }
     try { await next(ctx); }
-    catch (Exception ex) when (!ctx.Response.HasStarted) {
+    catch (Exception ex) when (!ctx.Response.HasStarted)
+    {
         ctx.Response.StatusCode = ex is UserError u ? u.Status : ex is BadHttpRequestException b ? b.StatusCode : 500;
         await ctx.Response.WriteAsJsonAsync(new { detail = ex is UserError or BadHttpRequestException ? ex.Message : "Request failed. Check the server log." });
         if (ex is not UserError) app.Logger.LogError(ex, "Request failed");
@@ -39,7 +49,8 @@ var scanGate = new SemaphoreSlim(1, 1);
 // folder is entered as text and read by the server. That is the whole point of the feature:
 // this server runs on the same machine as the videos, so it can re-read the folder later on
 // its own -- a picker selection is a one-time snapshot that cannot be refreshed.
-string ResolveFolder(string raw) {
+string ResolveFolder(string raw)
+{
     var value = raw.Trim();
     if (value.StartsWith('~'))
         value = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), value[1..].TrimStart('/'));
@@ -49,28 +60,37 @@ string ResolveFolder(string raw) {
     return full;
 }
 
-async Task<object> ScanFolder(QueueStore store, VideoTools videos, CancellationToken ct) {
+async Task<object> ScanFolder(QueueStore store, VideoTools videos, CancellationToken ct)
+{
     var folder = store.LinkedFolder ?? throw new UserError("Link a folder first.");
     if (!Directory.Exists(folder)) throw new UserError("The linked folder is no longer there. Link it again.", 404);
     if (!await scanGate.WaitAsync(0, ct)) throw new UserError("A refresh is already running.", 409);
-    try {
+    try
+    {
         var files = Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories)
             .Where(p => videoExtensions.Contains(Path.GetExtension(p).ToLowerInvariant()))
             .Where(p => !Path.GetFileName(p).StartsWith('.'))   // .DS_Store, macOS ._ resource forks
             .OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToArray();
         var errors = new List<string>();
         int added = 0, skipped = 0;
-        foreach (var path in files) {
+        foreach (var path in files)
+        {
             ct.ThrowIfCancellationRequested();
             if (store.AlreadyImported(path)) { skipped++; continue; }
             var label = Path.GetRelativePath(folder, path);
-            try {
+            try
+            {
                 var size = new FileInfo(path).Length;
                 if (size > VideoTools.MaxBytes) throw new UserError("Maximum file size is 500 MB.");
                 var info = await videos.Inspect(path, ct);
-                var job = new VideoJob {
-                    Id = Guid.NewGuid().ToString("N"), Name = Path.GetFileName(path),
-                    SourcePath = path, Duration = info.Duration, Fps = info.Fps, Bytes = size
+                var job = new VideoJob
+                {
+                    Id = Guid.NewGuid().ToString("N"),
+                    Name = Path.GetFileName(path),
+                    SourcePath = path,
+                    Duration = info.Duration,
+                    Fps = info.Fps,
+                    Bytes = size
                 };
                 var dir = store.Folder(job.Id); Directory.CreateDirectory(dir);
                 try { await videos.Poster(path, Path.Combine(dir, "poster.jpg"), ct); store.Add(job); added++; }
@@ -80,7 +100,8 @@ async Task<object> ScanFolder(QueueStore store, VideoTools videos, CancellationT
             catch (Exception ex) { errors.Add($"{label}: {(ex is UserError ? ex.Message : "could not be read.")}"); }
         }
         return new { linkedFolder = folder, added, skipped, errors };
-    } finally { scanGate.Release(); }
+    }
+    finally { scanGate.Release(); }
 }
 
 app.MapGet("/api/state", (QueueStore s) => s.Snapshot());
@@ -92,7 +113,8 @@ app.MapGet("/api/models", async (string? endpoint, IHttpClientFactory clients, C
         throw new UserError("Enter a localhost model server URL.", 400);
     using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
     timeout.CancelAfter(TimeSpan.FromSeconds(8));
-    try {
+    try
+    {
         using var client = clients.CreateClient("model");
         using var response = await client.GetAsync(endpoint!.TrimEnd('/') + "/models", timeout.Token);
         if (!response.IsSuccessStatusCode) throw new UserError("Could not list models from this server.", 502);
@@ -101,9 +123,13 @@ app.MapGet("/api/models", async (string? endpoint, IHttpClientFactory clients, C
             .Select(m => m.GetProperty("id").GetString()).Where(m => !string.IsNullOrWhiteSpace(m))
             .Distinct().Order().ToArray();
         return Results.Ok(new { models });
-    } catch (HttpRequestException) {
+    }
+    catch (HttpRequestException)
+    {
         throw new UserError("Cannot reach the model server. Start Ollama and try again.", 502);
-    } catch (OperationCanceledException) when (!ct.IsCancellationRequested) {
+    }
+    catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+    {
         throw new UserError("Model list request timed out. Try again.", 504);
     }
 });
@@ -123,11 +149,14 @@ app.MapPost("/api/videos", async (HttpRequest request, QueueStore s, VideoTools 
     if (name.Length > 200) name = name[..200];
     var job = new VideoJob { Id = Guid.NewGuid().ToString("N"), Name = name };
     var dir = s.Folder(job.Id); Directory.CreateDirectory(dir);
-    try {
+    try
+    {
         long bytes = 0;
-        await using (var file = File.Create(Path.Combine(dir, "video"))) {
+        await using (var file = File.Create(Path.Combine(dir, "video")))
+        {
             var buffer = new byte[81920]; int n;
-            while ((n = await request.Body.ReadAsync(buffer, ct)) > 0) {
+            while ((n = await request.Body.ReadAsync(buffer, ct)) > 0)
+            {
                 bytes += n; if (bytes > VideoTools.MaxBytes) throw new UserError("Maximum file size is 500 MB.", 413);
                 await file.WriteAsync(buffer.AsMemory(0, n), ct);
             }
@@ -136,10 +165,12 @@ app.MapPost("/api/videos", async (HttpRequest request, QueueStore s, VideoTools 
         job = job with { Duration = info.Duration, Fps = info.Fps, Bytes = bytes };
         await videos.Poster(Path.Combine(dir, "video"), Path.Combine(dir, "poster.jpg"), ct);
         s.Add(job); return Results.Ok(job);
-    } catch { Directory.Delete(dir, true); throw; }
+    }
+    catch { Directory.Delete(dir, true); throw; }
 });
 app.MapPost("/api/folder", async (LinkRequest value, QueueStore s, VideoTools videos, CancellationToken ct) => {
-    if (string.IsNullOrWhiteSpace(value.Path)) {
+    if (string.IsNullOrWhiteSpace(value.Path))
+    {
         s.SetLinkedFolder(null);
         return Results.Ok(new { linkedFolder = (string?)null, added = 0, skipped = 0, errors = new List<string>() });
     }
@@ -163,6 +194,8 @@ app.MapGet("/api/videos/{id}/{asset}", (string id, string asset, QueueStore s) =
     if (asset == "video" && !new FileExtensionContentTypeProvider().TryGetContentType(job.Name, out type)) type = "video/mp4";
     return Results.File(path, type, enableRangeProcessing: true);
 });
+app.MapPost("/api/notifications/test", async (NotificationDispatcher d, CancellationToken ct) =>
+    Results.Ok(new { results = await d.SendTestAsync(ct) }));
 app.MapPost("/api/queue/{action}", (string action, QueueStore s) => {
     if (action is not ("start" or "pause")) throw new UserError("Unknown queue action.");
     s.SetRunning(action == "start"); return Results.Ok(new { ok = true });

@@ -1,4 +1,5 @@
-public sealed record VideoJob {
+public sealed record VideoJob
+{
     public string Id { get; init; } = "";
     public string Name { get; init; } = "";
     // Set only for videos discovered in the linked folder. The file stays where the user keeps
@@ -21,6 +22,11 @@ public sealed record VideoJob {
     public bool PersonLabels { get; init; }
     public double[] Timestamps { get; init; } = [];
     public double? Elapsed { get; init; }
+    public string? CameraName { get; init; }            
+    public DateTimeOffset? SegmentStart { get; init; } 
+    public DateTimeOffset? NotifiedAt { get; init; }   
+    public string? NotifyError { get; init; }           
+    public string? ReviewState { get; init; }           
 }
 // LinkedFolder is a property rather than a constructor parameter so a state.json written
 // before this feature existed still deserializes, with the folder simply absent.

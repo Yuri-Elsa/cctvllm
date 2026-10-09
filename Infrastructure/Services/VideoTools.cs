@@ -2,18 +2,26 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text.RegularExpressions;
 
-public sealed class VideoTools(IWebHostEnvironment env) {
-    public const int MaxFrames = 150;
+public sealed class VideoTools(IWebHostEnvironment env)
+{
+    public static readonly int MaxFrames = int.TryParse(Environment.GetEnvironmentVariable("CCTV_MAX_FRAMES"), out var frames) && frames >= 2 ? frames : 150;
     public const long MaxBytes = 500L * 1024 * 1024;
     private readonly string ffmpeg = Environment.GetEnvironmentVariable("CCTV_FFMPEG") ??
         Path.GetFullPath(Path.Combine(env.ContentRootPath, "../../work/demo-deps/imageio_ffmpeg/binaries/ffmpeg-macos-aarch64-v7.1"));
 
-    private async Task<(int Code, string Error)> Run(string[] args, CancellationToken cancellationToken) {
+    private async Task<(int Code, string Error)> Run(string[] args, CancellationToken cancellationToken)
+    {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromMinutes(3));
-        using var process = new Process { StartInfo = new ProcessStartInfo(ffmpeg) {
-            UseShellExecute = false, RedirectStandardError = true, RedirectStandardOutput = true
-        }};
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo(ffmpeg)
+            {
+                UseShellExecute = false,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true
+            }
+        };
         foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
         try { process.Start(); }
         catch (Exception) { throw new UserError("FFmpeg is unavailable. Set CCTV_FFMPEG to its executable path.", 503); }
@@ -25,7 +33,8 @@ public sealed class VideoTools(IWebHostEnvironment env) {
         return (process.ExitCode, await stderr);
     }
 
-    public async Task<(double Duration, double Fps)> Inspect(string path, CancellationToken ct) {
+    public async Task<(double Duration, double Fps)> Inspect(string path, CancellationToken ct)
+    {
         var result = await Run(["-hide_banner", "-i", path], ct);
         var durationMatch = Regex.Match(result.Error, @"Duration: (\d+):(\d+):(\d+(?:\.\d+)?)");
         var videoLine = result.Error.Split('\n').FirstOrDefault(x => x.Contains("Video:"));
@@ -39,12 +48,14 @@ public sealed class VideoTools(IWebHostEnvironment env) {
         return (duration, fps);
     }
 
-    public async Task Poster(string input, string output, CancellationToken ct) {
+    public async Task Poster(string input, string output, CancellationToken ct)
+    {
         var r = await Run(["-y", "-i", input, "-frames:v", "1", "-vf", "scale=320:-2", "-pix_fmt", "yuvj420p", output], ct);
         if (r.Code != 0 || !File.Exists(output)) throw new UserError("Could not decode this video.", 422);
     }
 
-    public async Task<(string[] Paths, double[] Timestamps)> Frames(string folder, double fps, CancellationToken ct) {
+    public async Task<(string[] Paths, double[] Timestamps)> Frames(string folder, double fps, CancellationToken ct)
+    {
         var output = Path.Combine(folder, "frames");
         if (Directory.Exists(output)) Directory.Delete(output, true);
         Directory.CreateDirectory(output);

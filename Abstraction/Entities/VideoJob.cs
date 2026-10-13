@@ -26,7 +26,10 @@ public sealed record VideoJob
     public DateTimeOffset? SegmentStart { get; init; } 
     public DateTimeOffset? NotifiedAt { get; init; }   
     public string? NotifyError { get; init; }           
-    public string? ReviewState { get; init; }           
+    public string? ReviewState { get; init; }
+    // True when person detection found nobody, so the model was never called. Not an error: on a real
+    // camera most segments are like this. RetentionService removes these first.
+    public bool NoPeople { get; init; }           
 }
 // LinkedFolder is a property rather than a constructor parameter so a state.json written
 // before this feature existed still deserializes, with the folder simply absent.

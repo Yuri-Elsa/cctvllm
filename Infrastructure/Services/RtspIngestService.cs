@@ -18,6 +18,23 @@ public sealed partial class RtspIngestService(QueueStore store, VideoTools video
     public string OutputRoot => options.Value.OutputDir ?? Path.Combine(store.Root, "rtsp");
     public IReadOnlyList<CameraStatus> Snapshot() => status.Values.OrderBy(s => s.Camera, StringComparer.OrdinalIgnoreCase).ToList();
 
+    // True only for a file this service writes: <output folder>/<camera>/<yyyyMMdd_HHmmss>.mp4. Retention
+    // deletes only files that pass this, so a stray file in a mis-set CCTV_RTSP_DIR is never touched.
+    public bool OwnsFile(string path)
+    {
+        var root = Path.GetFullPath(OutputRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var full = Path.GetFullPath(path);
+        if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return false;
+        var parts = full[root.Length..].Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return parts.Length == 2 && CameraFolder().IsMatch(parts[0]) && SegmentFile().IsMatch(parts[1]);
+    }
+
+    [GeneratedRegex("^[A-Za-z0-9_-]{1,40}$")]
+    private static partial Regex CameraFolder();
+
+    [GeneratedRegex(@"^\d{8}_\d{6}\.mp4$", RegexOptions.IgnoreCase)]
+    private static partial Regex SegmentFile();
+
     // True while ffmpeg may still be writing this file: it is the newest segment of a camera whose
     // ffmpeg is running (names sort by time). The watcher must not import it yet. This is exact on
     // every OS, unlike judging by file size, which can stay the same between ffmpeg's buffered writes.
@@ -26,7 +43,7 @@ public sealed partial class RtspIngestService(QueueStore store, VideoTools video
         try
         {
             var dir = Path.GetDirectoryName(path);
-            if (dir is null || !Path.GetFullPath(path).StartsWith(Path.GetFullPath(OutputRoot), StringComparison.OrdinalIgnoreCase)) return false;
+            if (dir is null || !OwnsFile(path)) return false;
             if (!status.TryGetValue(Path.GetFileName(dir), out var camera) || camera.State == "retrying") return false;
             var newest = Directory.EnumerateFiles(dir, "*.mp4").Select(Path.GetFileName)
                 .OrderByDescending(name => name, StringComparer.Ordinal).FirstOrDefault();

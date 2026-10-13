@@ -26,6 +26,7 @@ public sealed class QueueStore : IQueueRepository {
         File.Move(Path.Combine(root, "state.tmp"), Path.Combine(root, "state.json"), true);
     }
     public object Snapshot() { lock (gate) return new { jobs = items.ToArray(), running, settings, linkedFolder, frameLimit = VideoTools.MaxFrames }; }
+    public IReadOnlyList<VideoJob> Jobs() { lock (gate) return items.ToArray(); }
     public string Root => root;
     public string? LinkedFolder { get { lock (gate) return linkedFolder; } }
     public void SetLinkedFolder(string? value) { lock (gate) { linkedFolder = value; Persist(); } }

@@ -19,6 +19,14 @@ rem set CCTV_RTSP_LOBBY=rtsp://user:password@192.168.1.10:554/stream1
 rem set CCTV_RTSP_GUDANG=rtsp://user:password@192.168.1.11:554/stream1
 rem set CCTV_RTSP_SEGMENT_SECONDS=60
 
+rem Retensi segmen RTSP (nilai di bawah adalah default). Hanya berlaku untuk file keluaran RTSP.
+rem Video dari folder yang di-link atau hasil upload tidak pernah dihapus.
+rem set CCTV_MAX_QUEUE_PER_CAMERA=20
+rem set CCTV_KEEP_EMPTY_MINUTES=10
+rem set CCTV_KEEP_HOURS=24
+rem set CCTV_KEEP_FLAGGED_DAYS=30
+rem set CCTV_MAX_DISK_GB=20
+
 rem Mempercepat tes di laptop (opsional):
 rem set CCTV_MAX_FRAMES=16
 

@@ -19,6 +19,8 @@ builder.Services.AddOptions<RtspOptions>();
 builder.Services.AddSingleton<RtspIngestService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<RtspIngestService>());
 builder.Services.AddHostedService<FolderWatcherService>();
+builder.Services.AddOptions<RetentionOptions>();
+builder.Services.AddHostedService<RetentionService>();
 builder.Services.AddHttpClient("model", c => c.Timeout = TimeSpan.FromMinutes(15));
 builder.Services.AddOptions<NotificationOptions>();
 builder.Services.AddHttpClient<WebhookNotifier>();

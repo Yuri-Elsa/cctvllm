@@ -59,7 +59,8 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
                         Model = result.ModelName ?? (config.Mode == "local" ? config.Model : "Notebook backend"),
                         BackendMode = config.Mode,
                         PersonLabels = config.PersonLabels,
-                        Elapsed = Math.Round(watch.Elapsed.TotalSeconds, 1)
+                        Elapsed = Math.Round(watch.Elapsed.TotalSeconds, 1),
+                        NoPeople = result.NoPeople
                     });
                 }
                 var finished = store.Get(job.Id);
@@ -114,8 +115,11 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
         var tracked = await PersonTracking.Run(env.ContentRootPath, store.Folder(job.Id), store.VideoPath(job), job.Fps, ct);
         var timestamps = tracked.Timestamps;
         store.Update(job.Id, j => j with { Timestamps = timestamps });
+        // Nobody in the video is a normal result, not a failure: the job completes, is not flagged,
+        // and no frames are sent to the model.
         if (timestamps.Length == 0)
-            throw new UserError("Generation skipped: no people detected in the sampled frames. No frames were sent to the model.", 422);
+            return new DescriptionResult("Tidak ada orang terdeteksi pada frame yang diperiksa, sehingga tidak ada gambar yang dikirim ke model.",
+                "no", config.WeaponEnabled ? "no" : null, "", [], "Person detection only", NoPeople: true);
         var paths = config.PersonLabels ? tracked.Paths :
             tracked.PlainPaths;
         var result = await DescribeBatches(job, config, paths, timestamps,
@@ -561,5 +565,5 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
         }
         throw new UserError("The model returned incomplete or invalid JSON. Its raw response was saved; retry this video.", 502);
     }
-    private sealed record DescriptionResult(string Description, string? Suspicious, string? Weapon, string Raw, double[] Timestamps, string? ModelName = null);
+    private sealed record DescriptionResult(string Description, string? Suspicious, string? Weapon, string Raw, double[] Timestamps, string? ModelName = null, bool NoPeople = false);
 }

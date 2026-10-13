@@ -1,0 +1,19 @@
+{
+  "settings_version": "0.0.8",
+  "datasets_dir": "D:\\buat kp phr\\datasets",
+  "weights_dir": "D:\\buat kp phr\\cctvllm\\weights",
+  "runs_dir": "D:\\buat kp phr\\cctvllm\\runs",
+  "uuid": "81ad5d22ee1f714682dbd3560b5f0d95e91b75ed90ee0d55d39016271e54a97d",
+  "sync": true,
+  "api_key": "",
+  "openai_api_key": "",
+  "clearml": true,
+  "comet": true,
+  "dvc": true,
+  "mlflow": true,
+  "raytune": true,
+  "tensorboard": false,
+  "wandb": false,
+  "vscode_msg": true,
+  "openvino_msg": true
+}

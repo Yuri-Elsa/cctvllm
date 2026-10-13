@@ -13,6 +13,9 @@ builder.Services.AddControllersWithViews().AddRazorOptions(options => {
 });
 builder.Services.AddSingleton<QueueStore>();
 builder.Services.AddSingleton<VideoTools>();
+builder.Services.AddOptions<WatchOptions>();
+builder.Services.AddSingleton<IVideoIngest, VideoIngestService>();
+builder.Services.AddHostedService<FolderWatcherService>();
 builder.Services.AddHttpClient("model", c => c.Timeout = TimeSpan.FromMinutes(15));
 builder.Services.AddOptions<NotificationOptions>();
 builder.Services.AddHttpClient<WebhookNotifier>();
@@ -42,9 +45,6 @@ app.Use(async (ctx, next) => {
 app.UseStaticFiles();
 app.MapControllerRoute(name: "default", pattern: "{controller=Home}/{action=Index}/{id?}");
 
-string[] videoExtensions = [".mp4", ".mov", ".m4v", ".webm", ".avi", ".mkv", ".mpeg", ".mpg", ".mts", ".m2ts", ".wmv", ".3gp", ".ogv"];
-var scanGate = new SemaphoreSlim(1, 1);
-
 // The browser's folder picker only ever reports a folder *name*, never its path, so a linked
 // folder is entered as text and read by the server. That is the whole point of the feature:
 // this server runs on the same machine as the videos, so it can re-read the folder later on
@@ -60,49 +60,9 @@ string ResolveFolder(string raw)
     return full;
 }
 
-async Task<object> ScanFolder(QueueStore store, VideoTools videos, CancellationToken ct)
-{
-    var folder = store.LinkedFolder ?? throw new UserError("Link a folder first.");
-    if (!Directory.Exists(folder)) throw new UserError("The linked folder is no longer there. Link it again.", 404);
-    if (!await scanGate.WaitAsync(0, ct)) throw new UserError("A refresh is already running.", 409);
-    try
-    {
-        var files = Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories)
-            .Where(p => videoExtensions.Contains(Path.GetExtension(p).ToLowerInvariant()))
-            .Where(p => !Path.GetFileName(p).StartsWith('.'))   // .DS_Store, macOS ._ resource forks
-            .OrderBy(p => p, StringComparer.OrdinalIgnoreCase).ToArray();
-        var errors = new List<string>();
-        int added = 0, skipped = 0;
-        foreach (var path in files)
-        {
-            ct.ThrowIfCancellationRequested();
-            if (store.AlreadyImported(path)) { skipped++; continue; }
-            var label = Path.GetRelativePath(folder, path);
-            try
-            {
-                var size = new FileInfo(path).Length;
-                if (size > VideoTools.MaxBytes) throw new UserError("Maximum file size is 500 MB.");
-                var info = await videos.Inspect(path, ct);
-                var job = new VideoJob
-                {
-                    Id = Guid.NewGuid().ToString("N"),
-                    Name = Path.GetFileName(path),
-                    SourcePath = path,
-                    Duration = info.Duration,
-                    Fps = info.Fps,
-                    Bytes = size
-                };
-                var dir = store.Folder(job.Id); Directory.CreateDirectory(dir);
-                try { await videos.Poster(path, Path.Combine(dir, "poster.jpg"), ct); store.Add(job); added++; }
-                catch { Directory.Delete(dir, true); throw; }
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex) { errors.Add($"{label}: {(ex is UserError ? ex.Message : "could not be read.")}"); }
-        }
-        return new { linkedFolder = folder, added, skipped, errors };
-    }
-    finally { scanGate.Release(); }
-}
+// The scan itself lives in VideoIngestService so the watcher shares it.
+async Task<object> ScanFolder(QueueStore store, VideoTools videos, CancellationToken ct) =>
+    await app.Services.GetRequiredService<IVideoIngest>().ScanLinkedFolderAsync(ct);
 
 app.MapGet("/api/state", (QueueStore s) => s.Snapshot());
 app.MapGet("/api/health", () => new { ok = true, backend = "ASP.NET Core", version = Environment.Version.ToString() });

@@ -1,5 +1,31 @@
+# build
 bin/
 obj/
+.vs/
+*.user
+*.suo
+
+# app data (state.json, uploaded videos, posters)
 data/
 
-.vs/
+# python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# local run scripts and secrets (webhook URLs, SMTP password, RTSP credentials)
+start.bat
+*.local.bat
+.env
+.env.*
+
+# test videos live outside the repo
+testvideos/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.ipynb_checkpoints/

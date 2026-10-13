@@ -15,6 +15,9 @@ builder.Services.AddSingleton<QueueStore>();
 builder.Services.AddSingleton<VideoTools>();
 builder.Services.AddOptions<WatchOptions>();
 builder.Services.AddSingleton<IVideoIngest, VideoIngestService>();
+builder.Services.AddOptions<RtspOptions>();
+builder.Services.AddSingleton<RtspIngestService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<RtspIngestService>());
 builder.Services.AddHostedService<FolderWatcherService>();
 builder.Services.AddHttpClient("model", c => c.Timeout = TimeSpan.FromMinutes(15));
 builder.Services.AddOptions<NotificationOptions>();
@@ -65,6 +68,7 @@ async Task<object> ScanFolder(QueueStore store, VideoTools videos, CancellationT
     await app.Services.GetRequiredService<IVideoIngest>().ScanLinkedFolderAsync(ct);
 
 app.MapGet("/api/state", (QueueStore s) => s.Snapshot());
+app.MapGet("/api/cameras", (RtspIngestService r) => r.Snapshot());
 app.MapGet("/api/health", () => new { ok = true, backend = "ASP.NET Core", version = Environment.Version.ToString() });
 app.MapGet("/api/models", async (string? endpoint, IHttpClientFactory clients, CancellationToken ct) => {
     if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) ||

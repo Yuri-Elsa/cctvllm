@@ -12,7 +12,17 @@ set CCTV_WATCH=1
 set CCTV_WATCH_INTERVAL=10
 set CCTV_AUTORUN=1
 
+rem Kamera RTSP (opsional): nama kamera, lalu satu URL per kamera (CCTV_RTSP_<NAMA>).
+rem URL biasanya memuat password. Isi di start.bat saja, jangan di file ini.
+rem set CCTV_CAMERAS=lobby,gudang
+rem set CCTV_RTSP_LOBBY=rtsp://user:password@192.168.1.10:554/stream1
+rem set CCTV_RTSP_GUDANG=rtsp://user:password@192.168.1.11:554/stream1
+rem set CCTV_RTSP_SEGMENT_SECONDS=60
+
 rem Mempercepat tes di laptop (opsional):
 rem set CCTV_MAX_FRAMES=16
+
+rem Kurangi log HTTP supaya pesan penting terbaca:
+set Logging__LogLevel__Microsoft.AspNetCore=Warning
 
 dotnet run

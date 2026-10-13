@@ -1,9 +1,10 @@
 using Microsoft.Extensions.Options;
 
-// Polls the linked folder and imports new videos once they have finished being written.
+// Polls the folders that feed the queue and imports new videos once they have finished being
+// written: the folder linked in the UI (CCTV_WATCH) and the RTSP segment folder (CCTV_CAMERAS).
 // Polling is used instead of FileSystemWatcher because that is unreliable on network shares.
-public sealed class FolderWatcherService(QueueStore store, IVideoIngest ingest, IOptions<WatchOptions> options,
-    ILogger<FolderWatcherService> logger) : BackgroundService
+public sealed class FolderWatcherService(QueueStore store, IVideoIngest ingest, RtspIngestService rtsp,
+    IOptions<WatchOptions> options, ILogger<FolderWatcherService> logger) : BackgroundService
 {
     private readonly WatchOptions watch = options.Value;
 
@@ -18,12 +19,13 @@ public sealed class FolderWatcherService(QueueStore store, IVideoIngest ingest, 
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (!watch.Enabled)
+        if (!watch.Enabled && !rtsp.Enabled)
         {
-            logger.LogInformation("Folder watch is off. Set CCTV_WATCH=1 to turn it on.");
+            logger.LogInformation("Folder watch is off. Set CCTV_WATCH=1 (linked folder) or CCTV_CAMERAS (RTSP) to turn it on.");
             return;
         }
-        logger.LogInformation("Folder watch on: every {Seconds}s, auto-run {AutoRun}.", watch.PollInterval.TotalSeconds, watch.AutoRun);
+        logger.LogInformation("Folder watch on: every {Seconds}s, linked folder {Linked}, RTSP {Rtsp}, auto-run {AutoRun}.",
+            watch.PollInterval.TotalSeconds, watch.Enabled, rtsp.Enabled, watch.AutoRun);
         using var timer = new PeriodicTimer(watch.PollInterval);
         try
         {
@@ -33,19 +35,27 @@ public sealed class FolderWatcherService(QueueStore store, IVideoIngest ingest, 
         catch (OperationCanceledException) { }
     }
 
+    // The root decides the camera name: the first sub-folder under it.
+    private IEnumerable<string> Roots()
+    {
+        if (watch.Enabled && store.LinkedFolder is { } linked && Directory.Exists(linked)) yield return linked;
+        if (rtsp.Enabled && Directory.Exists(rtsp.OutputRoot)) yield return rtsp.OutputRoot;
+    }
+
     private async Task Poll(CancellationToken ct)
     {
-        var folder = store.LinkedFolder;
-        if (folder is null || !Directory.Exists(folder)) return;
         try
         {
-            var result = await ingest.TryScanAsync(folder, IsReady, ct);
-            if (result is null) return;   // a manual refresh is running; try again next tick
-            foreach (var error in result.Errors) logger.LogWarning("Watch import failed: {Error}", error);
-            if (result.Added > 0)
+            foreach (var root in Roots())
             {
-                logger.LogInformation("Watch added {Count} video(s).", result.Added);
-                if (watch.AutoRun) store.SetRunning(true);
+                var result = await ingest.TryScanAsync(root, IsReady, ct);
+                if (result is null) continue;   // a manual refresh is running; try again next tick
+                foreach (var error in result.Errors) logger.LogWarning("Watch import failed: {Error}", error);
+                if (result.Added > 0)
+                {
+                    logger.LogInformation("Watch added {Count} video(s) from {Root}.", result.Added, root);
+                    if (watch.AutoRun) store.SetRunning(true);
+                }
             }
             foreach (var path in seen.Keys.Where(p => !File.Exists(p)).ToList()) seen.Remove(path);
         }
@@ -56,6 +66,7 @@ public sealed class FolderWatcherService(QueueStore store, IVideoIngest ingest, 
     // Called only for files that are not imported yet. True means: import it now.
     private bool IsReady(string path)
     {
+        if (rtsp.IsBeingWritten(path)) return false;   // ffmpeg still has this segment open
         FileInfo info;
         try { info = new FileInfo(path); if (!info.Exists) return false; }
         catch (IOException) { return false; }
@@ -73,7 +84,7 @@ public sealed class FolderWatcherService(QueueStore store, IVideoIngest ingest, 
         return true;
     }
 
-    // On Windows a file still being copied cannot be opened exclusively.
+    // On Windows a file still being written or copied cannot be opened exclusively.
     private static bool IsLocked(string path)
     {
         try { using var _ = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None); return false; }

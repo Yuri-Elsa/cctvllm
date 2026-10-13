@@ -8,6 +8,7 @@ public sealed class VideoTools(IWebHostEnvironment env)
     public const long MaxBytes = 500L * 1024 * 1024;
     private readonly string ffmpeg = Environment.GetEnvironmentVariable("CCTV_FFMPEG") ??
         Path.GetFullPath(Path.Combine(env.ContentRootPath, "../../work/demo-deps/imageio_ffmpeg/binaries/ffmpeg-macos-aarch64-v7.1"));
+    public string FfmpegPath => ffmpeg;
 
     private async Task<(int Code, string Error)> Run(string[] args, CancellationToken cancellationToken)
     {

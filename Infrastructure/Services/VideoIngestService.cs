@@ -1,3 +1,5 @@
+using System.Globalization;
+
 public sealed class VideoIngestService(QueueStore store, VideoTools videos) : IVideoIngest
 {
     private static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -23,7 +25,7 @@ public sealed class VideoIngestService(QueueStore store, VideoTools videos) : IV
             Fps = media.Fps,
             Bytes = file.Length,
             CameraName = folderRoot is null ? null : CameraNameFor(folderRoot, path),
-            SegmentStart = StartTimeFor(file)
+            SegmentStart = StartTimeFor(path, file)
         };
         var dir = store.Folder(job.Id); Directory.CreateDirectory(dir);
         try { await videos.Poster(path, Path.Combine(dir, "poster.jpg"), ct); store.Add(job); return job; }
@@ -78,9 +80,13 @@ public sealed class VideoIngestService(QueueStore store, VideoTools videos) : IV
         return parts.Length > 1 ? parts[0] : null;
     }
 
-    // Best effort. A recorder sets creation time when the clip starts and write time when it ends;
-    // a copied file keeps its old write time but gets a new creation time. The earlier of the two
-    // is right for both. Reading a time out of the file name is a possible later refinement.
-    private static DateTimeOffset StartTimeFor(FileInfo file) =>
-        new(file.CreationTimeUtc < file.LastWriteTimeUtc ? file.CreationTimeUtc : file.LastWriteTimeUtc, TimeSpan.Zero);
+    // The RTSP segmenter names files yyyyMMdd_HHmmss in local time; that is the exact start.
+    // Otherwise it is best effort: a recorder sets creation time when a clip starts and write time
+    // when it ends, and a copied file keeps its old write time but gets a new creation time, so the
+    // earlier of the two is right for both.
+    private static DateTimeOffset StartTimeFor(string path, FileInfo file) =>
+        DateTime.TryParseExact(Path.GetFileNameWithoutExtension(path), "yyyyMMdd_HHmmss", CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeLocal, out var named)
+            ? new DateTimeOffset(named)
+            : new DateTimeOffset(file.CreationTimeUtc < file.LastWriteTimeUtc ? file.CreationTimeUtc : file.LastWriteTimeUtc, TimeSpan.Zero);
 }

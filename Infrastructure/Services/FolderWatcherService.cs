@@ -3,7 +3,7 @@ using Microsoft.Extensions.Options;
 // Polls the folders that feed the queue and imports new videos once they have finished being
 // written: the folder linked in the UI (CCTV_WATCH) and the RTSP segment folder (CCTV_CAMERAS).
 // Polling is used instead of FileSystemWatcher because that is unreliable on network shares.
-public sealed class FolderWatcherService(QueueStore store, IVideoIngest ingest, RtspIngestService rtsp,
+public sealed class FolderWatcherService(QueueStore store, IVideoIngest ingest, RtspIngestService rtsp, ScanCoordinator scans,
     IOptions<WatchOptions> options, ILogger<FolderWatcherService> logger) : BackgroundService
 {
     private readonly WatchOptions watch = options.Value;
@@ -19,18 +19,20 @@ public sealed class FolderWatcherService(QueueStore store, IVideoIngest ingest, 
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // No early return when both switches are off: the loop must still run, because linking a folder
+        // or pressing Refresh hands the import to this service (see ScanCoordinator).
         if (!watch.Enabled && !rtsp.Enabled)
-        {
-            logger.LogInformation("Folder watch is off. Set CCTV_WATCH=1 (linked folder) or CCTV_CAMERAS (RTSP) to turn it on.");
-            return;
-        }
-        logger.LogInformation("Folder watch on: every {Seconds}s, linked folder {Linked}, RTSP {Rtsp}, auto-run {AutoRun}.",
-            watch.PollInterval.TotalSeconds, watch.Enabled, rtsp.Enabled, watch.AutoRun);
-        using var timer = new PeriodicTimer(watch.PollInterval);
+            logger.LogInformation("Automatic folder watch is off (CCTV_WATCH / CCTV_CAMERAS). A linked folder is still imported when you link it or press Refresh.");
+        else
+            logger.LogInformation("Folder watch on: every {Seconds}s, linked folder {Linked}, RTSP {Rtsp}, auto-run {AutoRun}.",
+                watch.PollInterval.TotalSeconds, watch.Enabled, rtsp.Enabled, watch.AutoRun);
         try
         {
-            do { await Poll(stoppingToken); }
-            while (await timer.WaitForNextTickAsync(stoppingToken));
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                await Poll(stoppingToken);
+                await scans.WaitAsync(watch.PollInterval, stoppingToken);   // wakes early on a link / refresh request
+            }
         }
         catch (OperationCanceledException) { }
     }
@@ -46,10 +48,15 @@ public sealed class FolderWatcherService(QueueStore store, IVideoIngest ingest, 
     {
         try
         {
+            // A link / Refresh request: scan the linked folder now, without the "file is stable" wait.
+            var requested = scans.TryTake() ? store.LinkedFolder : null;
+            if (requested is not null) await ScanRequested(requested, ct);
+
             foreach (var root in Roots())
             {
+                if (root == requested) continue;   // just scanned
                 var result = await ingest.TryScanAsync(root, IsReady, ct);
-                if (result is null) continue;   // a manual refresh is running; try again next tick
+                if (result is null) continue;   // another scan is running; try again next tick
                 foreach (var error in result.Errors) logger.LogWarning("Watch import failed: {Error}", error);
                 if (result.Added > 0)
                 {
@@ -61,6 +68,32 @@ public sealed class FolderWatcherService(QueueStore store, IVideoIngest ingest, 
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex) { logger.LogWarning(ex, "Folder watch poll failed."); }
+    }
+
+    private async Task ScanRequested(string folder, CancellationToken ct)
+    {
+        scans.Begin();
+        ScanResult? result = null;
+        try
+        {
+            result = await ingest.TryScanAsync(folder, null, ct);
+            if (result is null)
+            {   // the gate is held by another scan: ask again shortly instead of spinning
+                await Task.Delay(500, ct);
+                scans.Request();
+                return;
+            }
+            foreach (var error in result.Errors) logger.LogWarning("Linked folder import failed: {Error}", error);
+            logger.LogInformation("Linked folder scan: {Added} added, {Skipped} already imported, {Errors} skipped.",
+                result.Added, result.Skipped, result.Errors.Count);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Linked folder scan failed.");
+            result = new ScanResult(folder, 0, 0, ["The folder could not be read. Check the server log."]);
+        }
+        finally { scans.Finish(result); }
     }
 
     // Called only for files that are not imported yet. True means: import it now.

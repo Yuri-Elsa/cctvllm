@@ -18,6 +18,7 @@ builder.Services.AddSingleton<IVideoIngest, VideoIngestService>();
 builder.Services.AddOptions<RtspOptions>();
 builder.Services.AddSingleton<RtspIngestService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<RtspIngestService>());
+builder.Services.AddSingleton<ScanCoordinator>();
 builder.Services.AddHostedService<FolderWatcherService>();
 builder.Services.AddOptions<RetentionOptions>();
 builder.Services.AddHostedService<RetentionService>();
@@ -64,10 +65,6 @@ string ResolveFolder(string raw)
     if (!Directory.Exists(full)) throw new UserError("There is no folder at that path.", 404);
     return full;
 }
-
-// The scan itself lives in VideoIngestService so the watcher shares it.
-async Task<object> ScanFolder(QueueStore store, VideoTools videos, CancellationToken ct) =>
-    await app.Services.GetRequiredService<IVideoIngest>().ScanLinkedFolderAsync(ct);
 
 app.MapGet("/api/state", (QueueStore s) => s.Snapshot());
 app.MapGet("/api/cameras", (RtspIngestService r) => r.Snapshot());
@@ -134,21 +131,28 @@ app.MapPost("/api/videos", async (HttpRequest request, QueueStore s, VideoTools 
     }
     catch { Directory.Delete(dir, true); throw; }
 });
-app.MapPost("/api/folder", async (LinkRequest value, QueueStore s, VideoTools videos, CancellationToken ct) => {
+// Linking a folder only saves the path and asks FolderWatcherService to import it. The call returns
+// at once; progress and the result come from GET /api/folder/status.
+app.MapPost("/api/folder", (LinkRequest value, QueueStore s, ScanCoordinator scans) => {
     if (string.IsNullOrWhiteSpace(value.Path))
     {
         s.SetLinkedFolder(null);
-        return Results.Ok(new { linkedFolder = (string?)null, added = 0, skipped = 0, errors = new List<string>() });
+        return Results.Ok(new { linkedFolder = (string?)null, importing = false });
     }
     var folder = ResolveFolder(value.Path);
     if (folder.Equals(s.Root, StringComparison.OrdinalIgnoreCase) ||
         folder.StartsWith(s.Root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
         throw new UserError("That is the app's own data folder. Choose the folder your videos are in.");
     s.SetLinkedFolder(folder);
-    return Results.Ok(await ScanFolder(s, videos, ct));
+    scans.Request();
+    return Results.Ok(new { linkedFolder = folder, importing = true });
 });
-app.MapPost("/api/folder/refresh", async (QueueStore s, VideoTools videos, CancellationToken ct) =>
-    Results.Ok(await ScanFolder(s, videos, ct)));
+app.MapPost("/api/folder/refresh", (QueueStore s, ScanCoordinator scans) => {
+    if (s.LinkedFolder is null) throw new UserError("Link a folder first.");
+    scans.Request();
+    return Results.Ok(new { importing = true });
+});
+app.MapGet("/api/folder/status", (ScanCoordinator scans) => scans.Status());
 app.MapGet("/api/videos/{id}/{asset}", (string id, string asset, QueueStore s) => {
     var job = s.Get(id);
     if (asset is not ("video" or "poster.jpg")) return Results.NotFound();

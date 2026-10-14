@@ -2,7 +2,8 @@ using System.Text.Json;
 
 // JSON-backed development repository. It implements the ADS abstraction so an EF Core
 // repository can replace it without changing controllers or processing services.
-public sealed class QueueStore : IQueueRepository {
+public sealed class QueueStore : IQueueRepository
+{
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private readonly object gate = new();
     private readonly string root;
@@ -10,17 +11,21 @@ public sealed class QueueStore : IQueueRepository {
     private ModelSettings settings = new();
     private string? linkedFolder;
     private bool running;
-    public QueueStore(IWebHostEnvironment env) {
+    private static readonly bool Fifo = Environment.GetEnvironmentVariable("CCTV_QUEUE_FIFO") is "1" or "true";
+    public QueueStore(IWebHostEnvironment env)
+    {
         root = Environment.GetEnvironmentVariable("CCTV_DATA_DIR") ?? Path.Combine(env.ContentRootPath, "data");
         Directory.CreateDirectory(root);
-        if (File.Exists(Path.Combine(root, "state.json"))) {
+        if (File.Exists(Path.Combine(root, "state.json")))
+        {
             var saved = JsonSerializer.Deserialize<StoredState>(File.ReadAllText(Path.Combine(root, "state.json")), Json)!;
             settings = saved.Settings;
             linkedFolder = saved.LinkedFolder;
             items = saved.Jobs.Select(j => j.Status == "processing" ? j with { Status = "queued", Stage = "Queued after restart" } : j).ToList();
         }
     }
-    private void Persist() {
+    private void Persist()
+    {
         File.WriteAllText(Path.Combine(root, "state.tmp"),
             JsonSerializer.Serialize(new StoredState(settings, items) { LinkedFolder = linkedFolder }, Json));
         File.Move(Path.Combine(root, "state.tmp"), Path.Combine(root, "state.json"), true);
@@ -33,44 +38,69 @@ public sealed class QueueStore : IQueueRepository {
     // Where this job's video actually lives: in the user's linked folder, or in the job's own
     // folder for an uploaded file. Everything downstream reads the video through here.
     public string VideoPath(VideoJob job) => job.SourcePath ?? Path.Combine(Folder(job.Id), "video");
-    public bool AlreadyImported(string sourcePath) {
+    public bool AlreadyImported(string sourcePath)
+    {
         lock (gate) return items.Any(j => j.SourcePath is not null &&
             string.Equals(j.SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase));
     }
-    public string Folder(string id) {
+    public string Folder(string id)
+    {
         if (!Guid.TryParseExact(id, "N", out _)) throw new UserError("Video not found.", 404);
         return Path.Combine(root, id);
     }
     public VideoJob Get(string id) { lock (gate) return items.FirstOrDefault(j => j.Id == id) ?? throw new UserError("Video not found.", 404); }
     public void Add(VideoJob job) { lock (gate) { items.Add(job); Persist(); } }
-    public void Update(string id, Func<VideoJob, VideoJob> update) {
+    public void Update(string id, Func<VideoJob, VideoJob> update)
+    {
         lock (gate) { var index = items.FindIndex(j => j.Id == id); if (index >= 0) { items[index] = update(items[index]); Persist(); } }
     }
-    public void SetSettings(ModelSettings value) {
-        lock (gate) {
+    public void SetSettings(ModelSettings value)
+    {
+        lock (gate)
+        {
             if (items.Any(j => j.Status == "processing")) throw new UserError("Pause and wait for the current video before changing models.", 409);
             settings = value; Persist();
         }
     }
     public void SetRunning(bool value) { lock (gate) running = value; }
-    public (VideoJob Job, ModelSettings Settings)? Take() {
-        lock (gate) {
+    public (VideoJob Job, ModelSettings Settings)? Take()
+    {
+        lock (gate)
+        {
             if (!running) return null;
-            var index = items.FindIndex(j => j.Status == "queued");
+            var index = NextQueued();
             if (index < 0) { running = false; return null; }
             items[index] = items[index] with { Status = "processing", Stage = "Extracting frames", Error = null };
             Persist(); return (items[index], settings);
         }
     }
-    public void Retry(string id) {
-        lock (gate) {
+    private int NextQueued()
+    {
+        if (!Fifo)
+        {
+            var newest = -1;
+            for (var i = 0; i < items.Count; i++)
+            {
+                if (items[i].Status != "queued" || items[i].CameraName is null) continue;
+                if (newest < 0 || (items[i].SegmentStart ?? items[i].Created) >= (items[newest].SegmentStart ?? items[newest].Created)) newest = i;
+            }
+            if (newest >= 0) return newest;
+        }
+        return items.FindIndex(j => j.Status == "queued");
+    }
+    public void Retry(string id)
+    {
+        lock (gate)
+        {
             var job = Get(id);
             if (job.Status is not ("failed" or "cancelled")) throw new UserError("Only failed or cancelled videos can be retried.");
             Update(id, j => j with { Status = "queued", Stage = "Queued", Error = null });
         }
     }
-    public void Remove(string id) {
-        lock (gate) {
+    public void Remove(string id)
+    {
+        lock (gate)
+        {
             var job = Get(id);
             if (job.Status == "processing") throw new UserError("Cancel the video before removing it.", 409);
             // Only the job's own folder goes: a linked video is never copied here, so the

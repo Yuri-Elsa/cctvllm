@@ -108,7 +108,8 @@ public sealed class FolderWatcherService(QueueStore store, IVideoIngest ingest, 
         if (handled.Contains(key)) return false;
 
         var current = (info.Length, info.LastWriteTimeUtc);
-        var unchanged = seen.TryGetValue(path, out var previous) && previous == current && info.Length > 0;
+        var finishedSegment = info.Length > 0 && rtsp.OwnsFile(path);
+        var unchanged = finishedSegment || (seen.TryGetValue(path, out var previous) && previous == current && info.Length > 0);
         seen[path] = current;
         if (!unchanged || IsLocked(path)) return false;
 

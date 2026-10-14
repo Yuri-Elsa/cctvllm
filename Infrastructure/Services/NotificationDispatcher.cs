@@ -126,25 +126,34 @@ public sealed class NotificationDispatcher : BackgroundService
     private async Task Deliver(NotificationPayload message, List<NotificationPayload> covered, CancellationToken ct)
     {
         var active = notifiers.Where(n => n.Enabled).ToList();
-        string? error = null; var ok = false;
-        for (var attempt = 1; attempt <= options.MaxAttempts && !ok; attempt++)
+        var sentBy = new HashSet<string>();
+        var failures = new List<string>();
+        foreach (var notifier in active)
         {
-            try
+            string? error = null; var sent = false;
+            for (var attempt = 1; attempt <= options.MaxAttempts && !sent; attempt++)
             {
-                foreach (var notifier in active) await notifier.SendAsync(message, ct);
-                ok = true; error = null;
+                try { await notifier.SendAsync(message, ct); sent = true; }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    error = Describe(ex);
+                    logger.LogWarning("Notification via {Channel} attempt {Attempt}/{Max} failed for {Job}: {Error}", notifier.Name, attempt, options.MaxAttempts, message.JobId, error);
+                    if (attempt < options.MaxAttempts) await Task.Delay(options.BackoffBase * Math.Pow(2, attempt - 1), ct);
+                }
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                error = Describe(ex);
-                logger.LogWarning("Notification attempt {Attempt}/{Max} failed for {Job}: {Error}", attempt, options.MaxAttempts, message.JobId, error);
-                if (attempt < options.MaxAttempts) await Task.Delay(options.BackoffBase * Math.Pow(2, attempt - 1), ct);
-            }
+            if (sent) sentBy.Add(notifier.Name); else failures.Add($"{notifier.Name}: {error}");
         }
+        var real = active.Where(n => n.Name != "log").ToList();
+        var ok = real.Count == 0 ? sentBy.Contains("log") : real.Any(n => sentBy.Contains(n.Name));
+        var summary = failures.Count > 0 ? string.Join(" | ", failures) : null;
         foreach (var item in covered.Where(i => !string.IsNullOrEmpty(i.JobId)))
-            await sink.RecordAsync(item.JobId, ok ? DateTimeOffset.UtcNow : null, error, ct);
+            await sink.RecordAsync(item.JobId, ok ? DateTimeOffset.UtcNow : null, summary, ct);
     }
 
-    private static string Describe(Exception ex) =>
-        ex is HttpRequestException { StatusCode: { } code } ? $"HttpRequestException {(int)code}" : ex.GetType().Name;
+    private static string Describe(Exception ex) => ex switch
+    {
+        NotifierException => ex.Message,
+        HttpRequestException { StatusCode: { } code } => $"HttpRequestException {(int)code}",
+        _ => ex.GetType().Name
+    };
 }

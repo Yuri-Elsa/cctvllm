@@ -26,6 +26,9 @@ builder.Services.AddHttpClient("model", c => c.Timeout = TimeSpan.FromMinutes(15
 builder.Services.AddOptions<NotificationOptions>();
 builder.Services.AddHttpClient<WebhookNotifier>();
 builder.Services.AddSingleton<INotifier>(sp => sp.GetRequiredService<WebhookNotifier>());
+builder.Services.AddOptions<WhatsAppOptions>();
+builder.Services.AddHttpClient<WhatsAppNotifier>();
+builder.Services.AddSingleton<INotifier>(sp => sp.GetRequiredService<WhatsAppNotifier>());
 builder.Services.AddSingleton<INotifier, EmailNotifier>();
 builder.Services.AddSingleton<INotifier, LogNotifier>();
 builder.Services.AddSingleton<INotificationResultSink, QueueNotificationSink>();

@@ -64,6 +64,15 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
                     });
                 }
                 var finished = store.Get(job.Id);
+                if (finished.CameraName is not null && finished.SegmentStart is { } start)
+                {
+                    var now = DateTimeOffset.UtcNow;
+                    var clipEnd = start.AddSeconds(finished.Duration);
+                    var process = watch.Elapsed.TotalSeconds;
+                    var wait = Math.Max(0, (now - finished.Created).TotalSeconds - process);
+                    logger.LogInformation("Latency {Camera} {Video}: total {Total:0}s after the clip ended (ingest {Ingest:0}s, wait {Wait:0}s, process {Process:0}s)",
+                        finished.CameraName, finished.Name, (now - clipEnd).TotalSeconds, (finished.Created - clipEnd).TotalSeconds, wait, process);
+                }
                 if (new[] { finished }.Flagged().Any()) notifications.Enqueue(finished);
             }
             catch (OperationCanceledException)
@@ -75,8 +84,10 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
                 logger.LogWarning(ex, "Description failed for {Video}", job.Name);
                 var message = ex is HttpRequestException ? "Cannot reach the model server. Check the connection in Settings." : ex.Message;
                 store.Update(job.Id, j => j with { Status = "failed", Stage = "Failed", Error = message.Length > 500 ? message[..500] : message });
+                // Alert only for automated ingestion (watched folder / RTSP). A failed manual upload is
+                // already visible to the person who just added it.
                 try { var failed = store.Get(job.Id); if (failed.SourcePath is not null) notifications.EnqueueFailure(failed); }
-                catch (UserError) { }
+                catch (UserError) { }   // the video was removed meanwhile
             }
             finally
             {

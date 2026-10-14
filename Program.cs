@@ -31,6 +31,8 @@ builder.Services.AddSingleton<INotifier, LogNotifier>();
 builder.Services.AddSingleton<INotificationResultSink, QueueNotificationSink>();
 builder.Services.AddSingleton<NotificationDispatcher>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<NotificationDispatcher>());
+builder.Services.AddOptions<WatchdogOptions>();
+builder.Services.AddHostedService<CameraWatchdog>();
 builder.Services.AddSingleton<DescriptionWorker>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DescriptionWorker>());
 var app = builder.Build();

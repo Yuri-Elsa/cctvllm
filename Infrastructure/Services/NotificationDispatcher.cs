@@ -24,6 +24,19 @@ public sealed class NotificationDispatcher : BackgroundService
         });
     }
 
+    public string ReviewUrl => options.ReviewBaseUrl;
+
+    public void EnqueueSystem(NotificationPayload payload) => queue.Writer.TryWrite(payload);
+
+    public void EnqueueFailure(VideoJob job)
+    {
+        var reason = job.Error ?? "Analisis gagal.";
+        if (reason.Length > options.MaxDescriptionChars) reason = reason[..options.MaxDescriptionChars] + "…";
+        queue.Writer.TryWrite(new NotificationPayload(job.Id, job.CameraName ?? "(kamera tidak diketahui)",
+            job.SegmentStart ?? job.Created, reason, false, false,
+            $"{options.ReviewBaseUrl.TrimEnd('/')}/#job={job.Id}", 0, AlertKind.JobFailed));
+    }
+
     public void Enqueue(VideoJob job)
     {
         var description = job.Description ?? "";
@@ -57,10 +70,17 @@ public sealed class NotificationDispatcher : BackgroundService
             {
                 try
                 {
+                    if (payload.Kind is AlertKind.CameraOffline or AlertKind.CameraRecovered)
+                    {
+                        await Deliver(payload, [payload], stoppingToken);
+                        continue;
+                    }
                     bool sendNow;
                     lock (gate)
                     {
-                        if (!cameras.TryGetValue(payload.CameraName, out var cam)) cameras[payload.CameraName] = cam = new Camera();
+                        // Separate throttle per kind, so a failure digest never swallows a flag alert.
+                        var key = $"{payload.Kind}|{payload.CameraName}";
+                        if (!cameras.TryGetValue(key, out var cam)) cameras[key] = cam = new Camera();
                         var now = DateTimeOffset.UtcNow;
                         sendNow = cam.Held.Count == 0 && now - cam.LastSent >= options.ThrottleWindow;
                         if (sendNow) cam.LastSent = now; else cam.Held.Add(payload);
@@ -121,7 +141,8 @@ public sealed class NotificationDispatcher : BackgroundService
                 if (attempt < options.MaxAttempts) await Task.Delay(options.BackoffBase * Math.Pow(2, attempt - 1), ct);
             }
         }
-        foreach (var item in covered) await sink.RecordAsync(item.JobId, ok ? DateTimeOffset.UtcNow : null, error, ct);
+        foreach (var item in covered.Where(i => !string.IsNullOrEmpty(i.JobId)))
+            await sink.RecordAsync(item.JobId, ok ? DateTimeOffset.UtcNow : null, error, ct);
     }
 
     private static string Describe(Exception ex) =>

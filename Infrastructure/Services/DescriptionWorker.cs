@@ -75,6 +75,8 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
                 logger.LogWarning(ex, "Description failed for {Video}", job.Name);
                 var message = ex is HttpRequestException ? "Cannot reach the model server. Check the connection in Settings." : ex.Message;
                 store.Update(job.Id, j => j with { Status = "failed", Stage = "Failed", Error = message.Length > 500 ? message[..500] : message });
+                try { var failed = store.Get(job.Id); if (failed.SourcePath is not null) notifications.EnqueueFailure(failed); }
+                catch (UserError) { }
             }
             finally
             {

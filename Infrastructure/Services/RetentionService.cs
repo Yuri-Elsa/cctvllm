@@ -32,6 +32,8 @@ public sealed class RetentionService(QueueStore store, RtspIngestService rtsp, I
         catch (OperationCanceledException) { }
     }
 
+    internal void RunSweep() => Sweep();
+
     private void Sweep()
     {
         try
@@ -73,7 +75,8 @@ public sealed class RetentionService(QueueStore store, RtspIngestService rtsp, I
                 // just taken is left alone.
                 store.Update(job.Id, j => j.Status != "queued" ? j : j with
                 {
-                    Status = "cancelled", Stage = "Dropped (backlog)",
+                    Status = "cancelled",
+                    Stage = "Dropped (backlog)",
                     Error = $"Dropped: more than {limit} videos were waiting for {name}."
                 });
                 if (store.Get(job.Id).Stage == "Dropped (backlog)") report.Dropped++;

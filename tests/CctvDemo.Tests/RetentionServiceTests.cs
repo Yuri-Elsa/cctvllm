@@ -17,8 +17,8 @@ public class RetentionServiceTests
     {
         var logger = new CapturingLogger();
         using var service = new RetentionService(app.Store, app.Rtsp, Options.Create(new RetentionOptions()), logger);
-        await service.StartAsync(CancellationToken.None);
-        await service.StopAsync(CancellationToken.None);
+        service.RunSweep();
+        await Task.CompletedTask;
         return string.Join("\n", logger.Lines);
     }
 
@@ -136,7 +136,7 @@ public class RetentionServiceTests
 
         Assert.False(InStore(app, oldestUnflagged), log);
         Assert.True(InStore(app, flagged), log);
-        Assert.True(InStore(app, newestUnflagged), log); 
+        Assert.True(InStore(app, newestUnflagged), log);
     }
 
     [Fact]

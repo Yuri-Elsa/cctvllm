@@ -4,6 +4,12 @@ cd /d "%~dp0"
 set CCTV_FFMPEG=ffmpeg
 set "CCTV_YOLO_PYTHON=%~dp0.venv\Scripts\python.exe"
 
+rem Akses: secara default aplikasi hanya bisa dibuka dari komputer ini (127.0.0.1) tanpa login.
+rem Kalau dibuka ke jaringan (CCTV_URL), WAJIB beri password; tanpa itu semua orang di jaringan bisa melihat video.
+rem Password lewat HTTP biasa terkirim tanpa enkripsi: untuk jaringan, taruh di belakang HTTPS (reverse proxy).
+rem set CCTV_URL=http://0.0.0.0:8766
+rem set CCTV_UI_PASSWORD=ganti-dengan-password-panjang
+
 rem Notifikasi: isi URL webhook sendiri. Jangan commit URL asli.
 set CCTV_WEBHOOK_URL=
 

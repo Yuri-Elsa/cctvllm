@@ -1,5 +1,14 @@
 <div class="sidebar-bottom" aria-label="Authentication status">
-    <span class="local-dot"></span>
-    <span>Local workspace</span>
+    @if (User.Identity?.IsAuthenticated == true)
+    {
+        <span class="local-dot"></span>
+        <span>Signed in</span>
+        <form method="post" asp-controller="Account" asp-action="Logout"><button type="submit" class="nav-item">Sign out</button></form>
+    }
+    else
+    {
+        <span class="local-dot"></span>
+        <span>Local workspace</span>
+    }
     <div class="brand-stripe"></div>
 </div>

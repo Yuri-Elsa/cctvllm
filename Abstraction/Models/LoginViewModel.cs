@@ -1,0 +1,1 @@
+public sealed record LoginViewModel(string? ReturnUrl, string? Error);

@@ -2,8 +2,12 @@ using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authorization;
 
 var builder = WebApplication.CreateBuilder(args);
+var auth = new AuthOptions();
 builder.WebHost.UseUrls(Environment.GetEnvironmentVariable("CCTV_URL") ?? "http://127.0.0.1:8766");
 builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = VideoTools.MaxBytes);
 builder.Services.AddControllersWithViews().AddRazorOptions(options => {
@@ -11,6 +15,29 @@ builder.Services.AddControllersWithViews().AddRazorOptions(options => {
     options.ViewLocationFormats.Add("/Web/Views/{1}/{0}.cshtml");
     options.ViewLocationFormats.Add("/Web/Views/Shared/{0}.cshtml");
 });
+if (auth.Enabled)
+{
+    var passwordVersion = auth.Version;
+    builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme).AddCookie(o => {
+        o.Cookie.Name = "cctv_auth";
+        o.Cookie.HttpOnly = true;
+        o.Cookie.SameSite = SameSiteMode.Strict;
+        o.LoginPath = "/Account/Login";
+        o.ExpireTimeSpan = TimeSpan.FromHours(12);
+        o.SlidingExpiration = true;
+        o.Events.OnRedirectToLogin = ctx => {
+            if (ctx.Request.Path.StartsWithSegments("/api")) ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            else ctx.Response.Redirect(ctx.RedirectUri);
+            return Task.CompletedTask;
+        };
+        o.Events.OnValidatePrincipal = ctx => {
+            if (ctx.Principal?.FindFirst("pwv")?.Value == passwordVersion) return Task.CompletedTask;
+            ctx.RejectPrincipal();
+            return ctx.HttpContext.SignOutAsync();
+        };
+    });
+}
+builder.Services.AddAuthorization(o => { if (auth.Enabled) o.FallbackPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build(); });
 builder.Services.AddSingleton<QueueStore>();
 builder.Services.AddSingleton<VideoTools>();
 builder.Services.AddOptions<WatchOptions>();
@@ -56,6 +83,7 @@ app.Use(async (ctx, next) => {
     }
 });
 app.UseStaticFiles();
+if (auth.Enabled) { app.UseAuthentication(); app.UseAuthorization(); }
 app.MapControllerRoute(name: "default", pattern: "{controller=Home}/{action=Index}/{id?}");
 
 // The browser's folder picker only ever reports a folder *name*, never its path, so a linked

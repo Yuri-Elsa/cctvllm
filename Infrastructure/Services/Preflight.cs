@@ -45,7 +45,8 @@ public sealed class Preflight(QueueStore store, VideoTools videos, RtspIngestSer
                 Guard("YOLO weights", () => Task.FromResult(CheckWeights())),
                 Guard("Model server", () => CheckModel(ct)),
                 Guard("Data folder", () => Task.FromResult(CheckFolders())),
-                Guard("Notifiers", () => Task.FromResult(CheckNotifiers())));
+                Guard("Notifiers", () => Task.FromResult(CheckNotifiers())),
+                Guard("Access", () => Task.FromResult(AccessCheck(new AuthOptions().Password, Environment.GetEnvironmentVariable("CCTV_URL")))));
             var overall = checks.Any(c => c.Status == "fail") ? "fail" : checks.Any(c => c.Status == "warn") ? "warn" : "ok";
             return latest = new PreflightReport(DateTimeOffset.UtcNow, overall, checks);
         }
@@ -188,6 +189,21 @@ public sealed class Preflight(QueueStore store, VideoTools videos, RtspIngestSer
             return $", {drive.AvailableFreeSpace / 1024d / 1024 / 1024:0.#} GB free";
         }
         catch (Exception) { return ""; }
+    }
+
+    internal static PreflightCheck AccessCheck(string? password, string? urls)
+    {
+        const string name = "Access";
+        var loopback = AuthOptions.IsLoopbackOnly(urls);
+        if (password is null)
+            return loopback
+                ? new PreflightCheck(name, "ok", "Open access, but only this computer can reach the app (loopback).")
+                : new PreflightCheck(name, "warn", $"Listening on {urls} with no password: anyone on the network can watch the video and change settings. Set CCTV_UI_PASSWORD.");
+        if (password.Length < 8)
+            return new PreflightCheck(name, "warn", "CCTV_UI_PASSWORD is set but shorter than 8 characters.");
+        if (!loopback && (urls ?? "").Contains("http://", StringComparison.OrdinalIgnoreCase))
+            return new PreflightCheck(name, "warn", "Password sign-in is on, but over plain HTTP the password travels unencrypted. Put the app behind HTTPS (a reverse proxy).");
+        return new PreflightCheck(name, "ok", "Password sign-in is on (CCTV_UI_PASSWORD).");
     }
 
     private PreflightCheck CheckNotifiers()

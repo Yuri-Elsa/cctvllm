@@ -1,0 +1,25 @@
+@model LoginViewModel
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in · CCTV Description Demo</title><link rel="icon" href="data:,">
+<style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #edf2f5; color: #1e303e; font-family: "Segoe UI", Arial, sans-serif; font-size: 14px }
+    main { width: 340px; max-width: calc(100vw - 30px); background: #fff; border: 1px solid #e1eaf1; border-radius: 19px; padding: 28px; box-shadow: 0 24px 90px #16395330 }
+    .eyebrow { font-size: 10px; letter-spacing: .08em; color: #71818e }
+    h1 { margin: 6px 0 4px; font-size: 22px }
+    p { margin: 0 0 18px; font-size: 12px; color: #71818e }
+    label { display: block; font-size: 12px; color: #526b7c }
+    input { box-sizing: border-box; width: 100%; margin-top: 8px; padding: 10px 12px; font: inherit; border: 1px solid #ccdbe5; border-radius: 8px }
+    button { width: 100%; margin-top: 18px; padding: 10px 15px; font: inherit; color: #fff; background: #106db6; border: 1px solid #106db6; border-radius: 9px; cursor: pointer }
+    .error { margin-top: 14px; font-size: 12px; color: #a61624 }
+</style></head>
+<body><main>
+    <div class="eyebrow">SECURITY MONITORING</div>
+    <h1>Sign in</h1>
+    <p>Enter the password for this workspace.</p>
+    <form method="post" asp-controller="Account" asp-action="Login">
+        <input type="hidden" name="returnUrl" value="@Model.ReturnUrl">
+        <label>Password<input type="password" name="password" autocomplete="current-password" autofocus required></label>
+        @if (!string.IsNullOrEmpty(Model.Error)) { <div class="error" role="alert">@Model.Error</div> }
+        <button type="submit">Sign in</button>
+    </form>
+</main></body></html>

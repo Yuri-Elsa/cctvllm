@@ -3,7 +3,7 @@ const escapeHtml = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;'
 const duration = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 let state = { jobs: [], running: false, settings: {} }, cameras = [], scan = {}, selected = null, queueFilter = 'all', cameraFilter = 'all', queueKey = '', detailKey = '', cameraOptionsKey = '', cameraPanelHtml = '', seenScan, uploading = false, timer;
 function toast(text) { $('toast').textContent = text; $('toast').className = 'visible'; clearTimeout(timer); timer = setTimeout(() => $('toast').className = '', 7000) }
-async function api(path, options = {}) { const r = await fetch(path, options); const data = await r.json(); if (!r.ok) throw Error(data.detail || 'Request failed.'); return data }
+async function api(path, options = {}) { const r = await fetch(path, options); if (r.status === 401) { location.href = '/Account/Login'; throw Error('Signed out. Opening the sign-in page…') } const data = await r.json(); if (!r.ok) throw Error(data.detail || 'Request failed.'); return data }
 async function refresh() {
     try {
         const [s, c, f] = await Promise.all([api('/api/state'), api('/api/cameras').catch(() => cameras), api('/api/folder/status').catch(() => scan)]);
@@ -208,7 +208,7 @@ document.addEventListener('click', async e => {
     const review = e.target.closest('[data-review]');
     if (review) {
         const job = state.jobs.find(j => j.id === review.dataset.review); if (!job) return;
-        const next = job.reviewState === review.dataset.state ? null : review.dataset.state;
+        const next = job.reviewState === review.dataset.state ? null : review.dataset.state;   // pressing the active verdict clears it
         try { await api(`/api/videos/${job.id}/review`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ state: next }) }); await refresh() } catch (err) { toast(err.message) }
         return
     }

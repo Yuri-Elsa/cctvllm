@@ -13,6 +13,14 @@ For normal development with .NET 10 installed globally, use `dotnet run`. Set `C
 - **This Mac:** Ollama, `http://127.0.0.1:11434/v1`, model `qwen3-vl:4b-cctv` (Qwen3-VL 4B with a 16,384-token context for up to 10 frames). This smaller model is not equivalent to Gemma 4 12B. No inference data leaves the Mac in this mode.
 - **Notebook GPU:** Enter the running notebook's root share URL. The app sends the video to `/api/describe`. This is the path for retaining the notebook's actual model and inference code; the remote session must remain running. Use only a trusted endpoint.
 
+### Creating the local model
+
+`qwen3-vl:4b-cctv` is not downloadable by that name: it is the base `qwen3-vl:4b` with a 16,384-token context. Create it once with `sh tools/setup-model.sh` (macOS/Linux) or `tools\setup-model.bat` (Windows). The recipe is `tools/Modelfile.qwen3-vl-4b-cctv`. Then pick the model under Settings > Model. The code's built-in default is still `gemma4:e2b-it-qat`; the System check in Settings tells you when the selected model is not installed.
+
+## Access and password
+
+By default the app listens on 127.0.0.1 only and has no sign-in. To let other devices reach it, set `CCTV_URL` (for example `http://0.0.0.0:8766`) **and** `CCTV_UI_PASSWORD`. With a password set, every page and API call needs a sign-in (cookie, 12 hours, five wrong attempts lock an address out for five minutes) and changing the password signs everyone out. Over plain HTTP the password is not encrypted, so put the app behind HTTPS. The System check warns about a network address without a password. This is one shared password; per-user accounts and OpenID Connect are the next step (see ADS-ARCHITECTURE.md).
+
 ## Notebook alignment
 
 `activity-prompt.txt` contains the user-authored eyewitness narrative prompt. It is read in full for each local generation and included as the final text part of the model request. Local mode uses images followed by the prompt, 600 output tokens, greedy-style temperature 0, and thinking disabled. It samples by a frame-index stride of round(FPS × 2), downsizes to a maximum 640 pixels, then evenly subsamples to a maximum of 10 frames.

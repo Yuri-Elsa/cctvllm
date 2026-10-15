@@ -1,14 +1,25 @@
-using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Xunit;
 
 public class RetentionServiceTests
 {
-    private static async Task Sweep(TestApp app)
+    private sealed class CapturingLogger : ILogger<RetentionService>
     {
-        using var service = new RetentionService(app.Store, app.Rtsp, Options.Create(new RetentionOptions()), NullLogger<RetentionService>.Instance);
+        public List<string> Lines { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+            Lines.Add($"[{logLevel}] {formatter(state, exception)}" + (exception is null ? "" : "\n" + exception));
+    }
+
+    private static async Task<string> Sweep(TestApp app)
+    {
+        var logger = new CapturingLogger();
+        using var service = new RetentionService(app.Store, app.Rtsp, Options.Create(new RetentionOptions()), logger);
         await service.StartAsync(CancellationToken.None);
         await service.StopAsync(CancellationToken.None);
+        return string.Join("\n", logger.Lines);
     }
 
     private static VideoJob People(VideoJob j) => j with { NoPeople = false, Suspicious = "no", Weapon = "no" };
@@ -23,12 +34,12 @@ public class RetentionServiceTests
         var old = app.Segment("lobby", "20260101_100000.mp4", now.AddMinutes(-11), j => j with { NoPeople = true });
         var fresh = app.Segment("lobby", "20260101_110000.mp4", now.AddMinutes(-5), j => j with { NoPeople = true });
 
-        await Sweep(app);
+        var log = await Sweep(app);
 
-        Assert.False(InStore(app, old));
-        Assert.False(File.Exists(old.SourcePath!));
-        Assert.True(InStore(app, fresh));
-        Assert.True(File.Exists(fresh.SourcePath!));
+        Assert.False(InStore(app, old), log);
+        Assert.False(File.Exists(old.SourcePath!), log);
+        Assert.True(InStore(app, fresh), log);
+        Assert.True(File.Exists(fresh.SourcePath!), log);
     }
 
     [Fact]
@@ -39,10 +50,10 @@ public class RetentionServiceTests
         var old = app.Segment("lobby", "20260101_100000.mp4", now.AddHours(-25), People);
         var recent = app.Segment("lobby", "20260101_110000.mp4", now.AddHours(-23), People);
 
-        await Sweep(app);
+        var log = await Sweep(app);
 
-        Assert.False(InStore(app, old));
-        Assert.True(InStore(app, recent));
+        Assert.False(InStore(app, old), log);
+        Assert.True(InStore(app, recent), log);
     }
 
     [Fact]
@@ -53,11 +64,11 @@ public class RetentionServiceTests
         var twoDays = app.Segment("lobby", "20260101_100000.mp4", now.AddDays(-2), Flag);
         var ancient = app.Segment("lobby", "20260101_110000.mp4", now.AddDays(-31), Flag);
 
-        await Sweep(app);
+        var log = await Sweep(app);
 
-        Assert.True(InStore(app, twoDays));
-        Assert.True(File.Exists(twoDays.SourcePath!));
-        Assert.False(InStore(app, ancient));
+        Assert.True(InStore(app, twoDays), log);
+        Assert.True(File.Exists(twoDays.SourcePath!), log);
+        Assert.False(InStore(app, ancient), log);
     }
 
     [Fact]
@@ -81,10 +92,10 @@ public class RetentionServiceTests
         Directory.CreateDirectory(app.Store.Folder(job.Id));
         app.Store.Add(job);
 
-        await Sweep(app);
+        var log = await Sweep(app);
 
-        Assert.True(File.Exists(path));
-        Assert.True(InStore(app, job));
+        Assert.True(File.Exists(path), log);
+        Assert.True(InStore(app, job), log);
     }
 
     [Fact]
@@ -99,17 +110,17 @@ public class RetentionServiceTests
         var newer = Queued("20260101_100200.mp4", 2);
         var newest = Queued("20260101_100300.mp4", 1);
 
-        await Sweep(app);
+        var log = await Sweep(app);
 
         foreach (var dropped in new[] { oldest, older })
         {
             var job = app.Store.Get(dropped.Id);
-            Assert.Equal("cancelled", job.Status);
-            Assert.Equal("Dropped (backlog)", job.Stage);
-            Assert.True(File.Exists(dropped.SourcePath!));
+            Assert.True(job.Status == "cancelled", $"{dropped.Name} is '{job.Status}', expected 'cancelled'.\n{log}");
+            Assert.True(job.Stage == "Dropped (backlog)", $"{dropped.Name} stage is '{job.Stage}'.\n{log}");
+            Assert.True(File.Exists(dropped.SourcePath!), log);
         }
-        Assert.Equal("queued", app.Store.Get(newer.Id).Status);
-        Assert.Equal("queued", app.Store.Get(newest.Id).Status);
+        Assert.True(app.Store.Get(newer.Id).Status == "queued", log);
+        Assert.True(app.Store.Get(newest.Id).Status == "queued", log);
     }
 
     [Fact]
@@ -121,11 +132,11 @@ public class RetentionServiceTests
         var flagged = app.Segment("lobby", "20260101_110000.mp4", now.AddHours(-2), Flag, bytes: 6000);
         var newestUnflagged = app.Segment("lobby", "20260101_120000.mp4", now.AddHours(-1), People, bytes: 6000);
 
-        await Sweep(app);
+        var log = await Sweep(app);
 
-        Assert.False(InStore(app, oldestUnflagged));
-        Assert.True(InStore(app, flagged));
-        Assert.True(InStore(app, newestUnflagged));   // removing one segment was enough
+        Assert.False(InStore(app, oldestUnflagged), log);
+        Assert.True(InStore(app, flagged), log);
+        Assert.True(InStore(app, newestUnflagged), log); 
     }
 
     [Fact]
@@ -135,9 +146,9 @@ public class RetentionServiceTests
         var old = app.Segment("lobby", "20260101_100000.mp4", DateTimeOffset.UtcNow.AddHours(-2), j => j with { NoPeople = true });
         app.Store.SetLinkedFolder(app.Rtsp.OutputRoot);
 
-        await Sweep(app);
+        var log = await Sweep(app);
 
-        Assert.True(InStore(app, old));
-        Assert.True(File.Exists(old.SourcePath!));
+        Assert.True(InStore(app, old), log);
+        Assert.True(File.Exists(old.SourcePath!), log);
     }
 }

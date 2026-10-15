@@ -33,6 +33,7 @@ public sealed class QueueStore : IQueueRepository
     public object Snapshot() { lock (gate) return new { jobs = items.ToArray(), running, settings, linkedFolder, frameLimit = VideoTools.MaxFrames }; }
     public IReadOnlyList<VideoJob> Jobs() { lock (gate) return items.ToArray(); }
     public string Root => root;
+    public ModelSettings Settings { get { lock (gate) return settings; } }
     public string? LinkedFolder { get { lock (gate) return linkedFolder; } }
     public void SetLinkedFolder(string? value) { lock (gate) { linkedFolder = value; Persist(); } }
     // Where this job's video actually lives: in the user's linked folder, or in the job's own
@@ -53,6 +54,17 @@ public sealed class QueueStore : IQueueRepository
     public void Update(string id, Func<VideoJob, VideoJob> update)
     {
         lock (gate) { var index = items.FindIndex(j => j.Id == id); if (index >= 0) { items[index] = update(items[index]); Persist(); } }
+    }
+    public static readonly string[] ReviewStates = ["confirmed", "false_alarm"];
+    public void SetReview(string id, string? state)
+    {
+        if (!string.IsNullOrEmpty(state) && !ReviewStates.Contains(state)) throw new UserError("Unknown review state.");
+        lock (gate)
+        {
+            var job = Get(id);
+            if (job.Status != "completed") throw new UserError("Only a finished video can be reviewed.", 409);
+            Update(id, j => j with { ReviewState = string.IsNullOrEmpty(state) ? null : state });
+        }
     }
     public void SetSettings(ModelSettings value)
     {

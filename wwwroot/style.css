@@ -1293,3 +1293,132 @@ dialog .toggle-label input {
     overflow: auto;
     overflow-wrap: anywhere
 }
+
+/* Review verdict, notification status, export, system check */
+.review {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 18px
+}
+
+.review-label {
+    font-size: 11px;
+    color: var(--muted);
+    margin-right: 2px
+}
+
+.review button {
+    font-size: 12px;
+    padding: 7px 12px
+}
+
+    .review button[aria-pressed=true].review-confirmed {
+        background: #ffedf0;
+        border-color: #a61624;
+        color: #a61624
+    }
+
+    .review button[aria-pressed=true].review-false_alarm {
+        background: #f1f5e4;
+        border-color: #576a19;
+        color: #576a19
+    }
+
+.review-chip, .notify-chip {
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 5px;
+    margin-left: 6px
+}
+
+    .review-chip.confirmed, .notify-chip {
+        background: #ffedf0;
+        color: #a61624
+    }
+
+    .review-chip.false_alarm {
+        background: #f1f5e4;
+        color: #576a19
+    }
+
+.notify-line {
+    margin: 14px 0 0;
+    font-size: 11px;
+    color: var(--muted);
+    overflow-wrap: anywhere
+}
+
+    .notify-line strong {
+        margin-right: 6px;
+        color: var(--ink)
+    }
+
+    .notify-line.ok {
+        color: #576a19
+    }
+
+    .notify-line.warn {
+        color: #8a6100
+    }
+
+    .notify-line.fail {
+        color: #a61624
+    }
+
+.export-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 23px 17px;
+    font-size: 11px;
+    color: var(--muted)
+}
+
+    .export-row button {
+        font-size: 11px;
+        padding: 5px 10px
+    }
+
+.preflight-list {
+    list-style: none;
+    margin: 12px 0 0;
+    padding: 0
+}
+
+    .preflight-list li {
+        display: grid;
+        grid-template-columns: 18px 110px 1fr;
+        gap: 8px;
+        padding: 8px 0;
+        border-top: 1px solid var(--line);
+        font-size: 11px;
+        line-height: 1.5
+    }
+
+.pf-name {
+    font-weight: 600
+}
+
+.pf-detail {
+    color: var(--muted);
+    overflow-wrap: anywhere
+}
+
+.pf-ok .pf-icon {
+    color: #576a19
+}
+
+.pf-warn .pf-icon {
+    color: #8a6100
+}
+
+.pf-fail .pf-icon, .pf-fail .pf-name {
+    color: #a61624
+}
+
+#preflightStamp {
+    font-size: 11px;
+    color: var(--muted)
+}

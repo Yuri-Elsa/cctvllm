@@ -36,6 +36,8 @@ builder.Services.AddSingleton<NotificationDispatcher>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<NotificationDispatcher>());
 builder.Services.AddOptions<WatchdogOptions>();
 builder.Services.AddHostedService<CameraWatchdog>();
+builder.Services.AddSingleton<Preflight>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<Preflight>());
 builder.Services.AddSingleton<DescriptionWorker>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DescriptionWorker>());
 var app = builder.Build();
@@ -73,7 +75,10 @@ string ResolveFolder(string raw)
 
 app.MapGet("/api/state", (QueueStore s) => s.Snapshot());
 app.MapGet("/api/cameras", (RtspIngestService r) => r.Snapshot());
-app.MapGet("/api/health", () => new { ok = true, backend = "ASP.NET Core", version = Environment.Version.ToString() });
+// preflight is the last startup check's overall result ("ok", "warn", "fail"), or null while the first one is still running.
+app.MapGet("/api/health", (Preflight p) => new { ok = true, backend = "ASP.NET Core", version = Environment.Version.ToString(), preflight = p.Latest?.Overall });
+// Full setup report. ?refresh=true runs the checks again (the "Run check" button in Settings).
+app.MapGet("/api/preflight", (bool? refresh, Preflight p, CancellationToken ct) => p.GetAsync(refresh == true, ct));
 app.MapGet("/api/models", async (string? endpoint, IHttpClientFactory clients, CancellationToken ct) => {
     if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) ||
         uri.Scheme is not ("http" or "https") || !uri.IsLoopback ||
@@ -171,9 +176,22 @@ app.MapGet("/api/videos/{id}/{asset}", (string id, string asset, QueueStore s) =
 });
 app.MapPost("/api/notifications/test", async (NotificationDispatcher d, CancellationToken ct) =>
     Results.Ok(new { results = await d.SendTestAsync(ct) }));
+app.MapGet("/api/export", (string? format, string? camera, bool? flagged, QueueStore s) => {
+    format = (format ?? "csv").ToLowerInvariant();
+    if (format is not ("csv" or "json")) throw new UserError("Format must be csv or json.");
+    var jobs = JobExporter.Select(s.Jobs(), camera, flagged == true).ToList();
+    var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+    return format == "csv"
+        ? Results.File(JobExporter.ToCsv(jobs), "text/csv; charset=utf-8", $"cctv-jobs-{stamp}.csv")
+        : Results.File(JobExporter.ToJson(jobs, DateTimeOffset.UtcNow), "application/json", $"cctv-jobs-{stamp}.json");
+});
 app.MapPost("/api/queue/{action}", (string action, QueueStore s) => {
     if (action is not ("start" or "pause")) throw new UserError("Unknown queue action.");
     s.SetRunning(action == "start"); return Results.Ok(new { ok = true });
+});
+app.MapPost("/api/videos/{id}/review", (string id, ReviewRequest value, QueueStore s) => {
+    s.SetReview(id, value.State);
+    return Results.Ok(new { ok = true, reviewState = s.Get(id).ReviewState });
 });
 app.MapPost("/api/videos/{id}/{action}", (string id, string action, QueueStore s, DescriptionWorker worker) => {
     if (action == "cancel") worker.Cancel(id);

@@ -97,7 +97,7 @@ public sealed class FolderWatcherService(QueueStore store, IVideoIngest ingest, 
     }
 
     // Called only for files that are not imported yet. True means: import it now.
-    private bool IsReady(string path)
+    internal bool IsReady(string path)
     {
         if (rtsp.IsBeingWritten(path)) return false;   // ffmpeg still has this segment open
         FileInfo info;

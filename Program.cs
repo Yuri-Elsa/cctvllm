@@ -65,6 +65,8 @@ builder.Services.AddOptions<WatchdogOptions>();
 builder.Services.AddHostedService<CameraWatchdog>();
 builder.Services.AddSingleton<Preflight>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<Preflight>());
+builder.Services.AddSingleton<INotificationAgent, LlmNotificationAgent>();
+builder.Services.AddSingleton<FlagNotifier>();
 builder.Services.AddSingleton<DescriptionWorker>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DescriptionWorker>());
 var app = builder.Build();
@@ -140,6 +142,9 @@ app.MapPost("/api/settings", (ModelSettings value, QueueStore s) => {
         throw new UserError("Enter a valid server URL without embedded credentials.");
     if (value.Mode == "local" && !uri.IsLoopback) throw new UserError("Local mode requires a localhost address.");
     if (value.Mode == "local" && string.IsNullOrWhiteSpace(value.Model)) throw new UserError("Enter a model name.");
+    if (value.PersonDetector is not ("yolo" or "llm")) throw new UserError("Choose YOLO or LLM for person detection.");
+    if (!(value.PersonThreshold is >= 0 and <= 1) || !(value.SuspiciousThreshold is >= 0 and <= 1))
+        throw new UserError("Thresholds must be between 0 and 1.");
     if ((value.FlagActivity?.Length ?? 0) > 4000 || (value.SiteContext?.Length ?? 0) > 4000)
         throw new UserError("Criteria and context must each be 4,000 characters or less.");
     s.SetSettings(value with { Endpoint = value.Endpoint.TrimEnd('/'), Model = value.Model.Trim() });

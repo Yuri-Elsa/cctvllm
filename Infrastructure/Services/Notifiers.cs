@@ -30,6 +30,8 @@ public sealed class WebhookNotifier(HttpClient http, IOptions<NotificationOption
             time = p.Time,
             description = p.Description,
             flags = new { suspicious = p.Suspicious, weapon = p.Weapon },
+            urgency = p.Urgency,
+            summary = p.Summary,
             reviewUrl = p.ReviewUrl,
             mergedCount = p.MergedCount,
             notice = p.IsModelFlag ? NotificationPayload.Disclaimer : null
@@ -47,8 +49,9 @@ public sealed class EmailNotifier(IOptions<NotificationOptions> options) : INoti
         var o = options.Value;
         using var client = new SmtpClient(o.SmtpHost, o.SmtpPort) { EnableSsl = true };
         if (!string.IsNullOrEmpty(o.SmtpUser)) client.Credentials = new System.Net.NetworkCredential(o.SmtpUser, o.SmtpPassword);
+        var agent = string.IsNullOrWhiteSpace(p.Summary) ? "" : $"Urgensi: {p.Urgency}\nRingkasan: {p.Summary}\n";
         var body = p.IsModelFlag
-            ? $"{NotificationPayload.Disclaimer}\n\nKamera: {p.CameraName}\nWaktu: {p.Time:u}\n" +
+            ? $"{NotificationPayload.Disclaimer}\n\nKamera: {p.CameraName}\nWaktu: {p.Time:u}\n{agent}" +
               $"Suspicious: {p.Suspicious}   Weapon: {p.Weapon}\nDeskripsi: {p.Description}\nTinjau: {p.ReviewUrl}\n"
             : $"Kamera: {p.CameraName}\nWaktu: {p.Time:u}\nKeterangan: {p.Description}\nTinjau: {p.ReviewUrl}\n";
         using var message = new MailMessage(o.MailFrom ?? o.SmtpUser ?? "cctv@localhost", o.MailTo!)

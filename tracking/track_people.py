@@ -15,6 +15,8 @@ from ultralytics import YOLO
 
 SAMPLE_INTERVAL = 0.5       # seconds between detections (2 fps)
 MODEL_MIN_GAP = 1.0         # minimum seconds between frames sent to the vision model
+CONF = 0.25                 # default person-box confidence; the app passes ModelSettings.PersonThreshold as "conf"
+LOG_FLOOR = 0.05            # detections down to this confidence are scored (not kept) so a threshold can be re-swept offline
 MATCH_MAX_GAP = 1.5         # stop linking a person across a gap longer than this
 MATCH_MAX_TRAVEL = 3.0      # body-heights of travel allowed between two sightings
 MATCH_SIZE_RATIO = 2.0      # reject a match when box height changes by more than this factor
@@ -83,6 +85,8 @@ def main():
     spec = json.loads(manifest.read_text())
     interval = float(spec.get("sample_interval", SAMPLE_INTERVAL))
     model_gap = float(spec.get("model_min_gap", MODEL_MIN_GAP))
+    conf_threshold = float(spec.get("conf", CONF))
+    predict_floor = min(conf_threshold, LOG_FLOOR)
     model = YOLO(args.weights)
     cap = cv2.VideoCapture(spec["video"])
     if not cap.isOpened():
@@ -90,7 +94,7 @@ def main():
     fps = spec["fps"]
     output = manifest.parent / "tracked"
     output.mkdir(exist_ok=True)
-    records, motion = [], []
+    records, motion, samples = [], [], []
     previous, previous_time = [], None
     frame_index = sample = 0
     try:
@@ -108,24 +112,30 @@ def main():
             scale = min(1,640/max(h,w))
             frame = cv2.resize(frame,(max(1,int(w*scale)),max(1,int(h*scale))))
             # Sparse samples do not establish persistent identity across seconds.
-            result = model.predict(frame,classes=[0],conf=0.25,imgsz=640,device="cpu",verbose=False)[0]
+            result = model.predict(frame,classes=[0],conf=predict_floor,imgsz=640,device="cpu",verbose=False)[0]
             boxes = result.boxes
-            if boxes is None or len(boxes)==0:
+            all_boxes = boxes.xyxy.tolist() if boxes is not None and len(boxes) else []
+            all_conf = boxes.conf.tolist() if all_boxes else []
+            samples.append({"timestamp":round(timestamp,2),"score":round(max(all_conf),3) if all_conf else 0.0})
+            keep = [i for i,c in enumerate(all_conf) if c >= conf_threshold]
+            if not keep:
                 previous, previous_time = [], None
                 continue
+            kept_boxes = [all_boxes[i] for i in keep]
+            kept_conf = [all_conf[i] for i in keep]
             # Measure motion from the raw detections, before anything is drawn on the frame.
             current = [{"center": ((x1+x2)/2, (y1+y2)/2), "height": max(1, y2-y1)}
-                       for x1,y1,x2,y2 in (map(int,box) for box in boxes.xyxy.tolist())]
+                       for x1,y1,x2,y2 in (map(int,box) for box in kept_boxes)]
             matched = associate(previous, current,
                                 timestamp - previous_time if previous_time is not None else 0)
             raw_path = output / f"{sample:04d}-plain.png"
             if not cv2.imwrite(str(raw_path),frame): raise RuntimeError("Cannot save frame")
             people = []
-            for index,(box,confidence) in enumerate(zip(boxes.xyxy.tolist(),boxes.conf.tolist()),1):
+            for index,(box,confidence) in enumerate(zip(kept_boxes,kept_conf),1):
                 x1,y1,x2,y2 = map(int,box)
                 speed = matched.get(index-1)
                 pace = classify(speed) if speed is not None else None
-                label = f"F{sample}P{index}" if len(boxes)>1 else None
+                label = f"F{sample}P{index}" if len(kept_boxes)>1 else None
                 people.append({"id":label,"id_scope":"frame" if label else None,
                                "confidence":round(confidence,2),
                                "speed":round(speed,2) if speed is not None else None,
@@ -157,6 +167,6 @@ def main():
             chosen.append(record)
             last = record["timestamp"]
     chosen = select_records(chosen,spec.get("max_frames",150))
-    (manifest.parent/"tracking-result.json").write_text(json.dumps({"frames":chosen,"motion":motion}))
+    (manifest.parent/"tracking-result.json").write_text(json.dumps({"frames":chosen,"motion":motion,"samples":samples}))
 if __name__=="__main__":
     main()

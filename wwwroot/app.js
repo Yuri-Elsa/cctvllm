@@ -19,10 +19,14 @@ const REVIEW = { confirmed: 'Confirmed', false_alarm: 'False alarm' };
 function notifyInfo(j) {
     if (j.notifiedAt) return { cls: j.notifyError ? 'warn' : 'ok', text: `Sent ${segmentTime(j.notifiedAt)}` + (j.notifyError ? ` · some channels failed: ${j.notifyError}` : '') };
     if (j.notifyError) return { cls: 'fail', text: `Not delivered: ${j.notifyError}` };
+    const agent = j.screening && j.screening.agent;
+    if (agent && agent.action === 'ignore') return { cls: 'ok', text: `Agent chose not to notify${agent.reason ? ': ' + agent.reason : ''}` };
     if (isFlagged(j) || (j.status === 'failed' && j.sourcePath)) return { cls: 'pending', text: 'No delivery recorded yet (alerts are grouped per camera).' };
     return null;
 }
-const notifyLine = j => { const n = notifyInfo(j); return n ? `<p class="notify-line ${n.cls}"><strong>Notification</strong> ${escapeHtml(n.text)}</p>` : '' };
+const scoreTag = j => { const s = j.screening; if (!s || s.suspiciousScore == null) return ''; return `<span title="Probability the model answered yes, and the threshold used">p(yes) ${Number(s.suspiciousScore).toFixed(2)} · threshold ${Number(s.suspiciousThreshold).toFixed(2)}</span>` };
+const agentSummary = j => { const a = j.screening && j.screening.agent; if (!a || a.fallbackUsed || !a.summary) return ''; return `<p class="notify-line ok"><strong>Agent</strong> ${escapeHtml(a.action)} · ${escapeHtml(a.urgency || '')} — ${escapeHtml(a.summary)}</p>` };
+const notifyLine = j => { const n = notifyInfo(j); return (n ? `<p class="notify-line ${n.cls}"><strong>Notification</strong> ${escapeHtml(n.text)}</p>` : '') + agentSummary(j) };
 const reviewChip = j => j.reviewState && REVIEW[j.reviewState] ? `<span class="review-chip ${escapeHtml(j.reviewState)}">${REVIEW[j.reviewState]}</span>` : '';
 const notifyChip = j => { const n = notifyInfo(j); return n && (n.cls === 'fail' || n.cls === 'warn') ? '<span class="notify-chip">Notify failed</span>' : '' };
 const reviewBar = j => `<div class="review" role="group" aria-label="Review this alert"><span class="review-label">Your review</span>${Object.entries(REVIEW).map(([value, label]) => `<button type="button" class="review-${value}" data-review="${j.id}" data-state="${value}" aria-pressed="${j.reviewState === value}">${label}</button>`).join('')}</div>`;
@@ -76,7 +80,7 @@ function render() {
     $('linkFolder').textContent = linked ? 'Change' : 'Link a folder';
     $('refreshFolder').hidden = !linked;
     $('unlinkFolder').hidden = !linked;
-    const key = JSON.stringify([selected, queueFilter, cameraFilter, state.jobs.map(j => [j.id, j.status, j.stage, j.suspicious, j.weapon, j.reviewState, j.notifiedAt, j.notifyError])]);
+    const key = JSON.stringify([selected, queueFilter, cameraFilter, state.jobs.map(j => [j.id, j.status, j.stage, j.suspicious, j.weapon, j.reviewState, j.notifiedAt, j.notifyError, j.screening?.agent?.action])]);
     if (key !== queueKey) { queueKey = key; $('queue').innerHTML = visibleJobs.length ? visibleJobs.map(j => `<div class="queue-item ${selected === j.id ? 'selected' : ''}" role="button" tabindex="0" data-select="${j.id}" aria-label="View video ${state.jobs.indexOf(j) + 1}: ${escapeHtml(j.cameraName ? j.cameraName + ', ' : '')}${escapeHtml(j.name)}"><span class="queue-number" aria-hidden="true">${state.jobs.indexOf(j) + 1}</span><img src="/api/videos/${j.id}/poster.jpg" alt=""><div class="row-info"><span class="row-name">${escapeHtml(j.name)}</span><div class="row-meta">${cameraChip(j)}${segmentLabel(j)}<span>${duration(j.duration)} · ${(j.bytes / 1048576).toFixed(1)} MB</span>${reviewChip(j)}${notifyChip(j)}</div></div><span class="queue-status ${isDropped(j) ? 'dropped' : isFlagged(j) ? 'flagged' : j.status}">${isDropped(j) ? 'Dropped' : isFlagged(j) ? 'Flagged' : j.status === 'completed' ? 'Ready' : j.status === 'processing' ? 'Processing' : j.status === 'queued' ? 'Queued' : j.status === 'failed' ? 'Failed' : 'Cancelled'}</span><button class="remove" data-id="${j.id}" data-action="${['queued', 'processing'].includes(j.status) ? 'cancel' : 'delete'}" aria-label="${['queued', 'processing'].includes(j.status) ? 'Cancel' : 'Remove'} ${escapeHtml(j.name)}">×</button></div>`).join('') : `<div class="empty">${queueFilter === 'flagged' ? 'No flagged videos' + (cameraFilter === 'all' ? '.' : ' for this camera.') : cameraFilter !== 'all' ? 'No videos for this camera yet.' : 'No videos added.'}</div>` }
     const job = state.jobs.find(j => j.id === selected); const detail = JSON.stringify(job ?? null); if (detail === detailKey) return; detailKey = detail;
     $('status').textContent = job?.stage ?? '';
@@ -85,7 +89,7 @@ function render() {
     $('detail').innerHTML = job ? `<div class="video-wrap"><video controls playsinline preload="metadata" src="/api/videos/${job.id}/video" poster="/api/videos/${job.id}/poster.jpg"></video><div class="video-meta">${escapeHtml(job.name)} · ${duration(job.duration)}${job.cameraName || job.segmentStart ? `<div class="video-meta-sub">${cameraChip(job)}${segmentLabel(job)}</div>` : ''}</div></div><div class="result" id="result">${result(job)}</div>` : '<div class="placeholder">Select a video</div><div class="result"><h3>Description</h3><p class="waiting">No description yet.</p></div>';
 }
 function result(j) {
-    if (j.status === 'completed') return `<h3>Description</h3><p>${escapeHtml(j.description)}</p><div class="tags"><span class="flag-${j.suspicious === 'yes' ? 'yes' : 'no'}">Suspicious: ${escapeHtml(j.suspicious ?? 'unknown')}</span><span class="flag-${j.weapon === 'yes' ? 'yes' : 'no'}">Weapon: ${escapeHtml(j.weaponEnabled === false ? 'Disabled' : j.weapon ?? 'unknown')}</span><span>${j.timestamps.length} frames · ${j.elapsed}s${j.personLabels ? ' · Person labels' : ''}</span></div><div class="result-actions"><button data-copy="${j.id}">Copy</button><button data-download="${j.id}">Download</button></div>${isFlagged(j) ? reviewBar(j) : ''}${notifyLine(j)}`;
+    if (j.status === 'completed') return `<h3>Description</h3><p>${escapeHtml(j.description)}</p><div class="tags"><span class="flag-${j.suspicious === 'yes' ? 'yes' : 'no'}">Suspicious: ${escapeHtml(j.suspicious ?? 'unknown')}</span><span class="flag-${j.weapon === 'yes' ? 'yes' : 'no'}">Weapon: ${escapeHtml(j.weaponEnabled === false ? 'Disabled' : j.weapon ?? 'unknown')}</span><span>${j.timestamps.length} frames · ${j.elapsed}s${j.personLabels ? ' · Person labels' : ''}</span>${scoreTag(j)}</div><div class="result-actions"><button data-copy="${j.id}">Copy</button><button data-download="${j.id}">Download</button></div>${isFlagged(j) ? reviewBar(j) : ''}${notifyLine(j)}`;
     if (j.status === 'failed') return `<h3>Generation failed</h3><p class="error">${escapeHtml(j.error)}</p><div class="result-actions"><button data-id="${j.id}" data-action="retry">Retry</button></div>${notifyLine(j)}`;
     if (isDropped(j)) return `<h3>Skipped: too many videos waiting</h3><p>${j.cameraName ? `Camera <strong>${escapeHtml(j.cameraName)}</strong> had` : 'This camera had'} more videos waiting than the model could process, so this older recording was skipped in favor of newer footage. It was <strong>not analysed</strong>: having no description does not mean nothing happened in this clip.</p><p class="waiting">The file is kept for now. Requeue it to analyse it anyway; if the queue is still full it may be dropped again.${j.error ? `<br><small>${escapeHtml(j.error)}</small>` : ''}</p><div class="result-actions"><button data-id="${j.id}" data-action="retry">Requeue</button></div>`;
     if (j.status === 'cancelled') return `<h3>Cancelled</h3><div class="result-actions"><button data-id="${j.id}" data-action="retry">Requeue</button></div>`;
@@ -165,7 +169,7 @@ $('refreshFolder').onclick = async () => {
     finally { $('refreshFolder').disabled = false }
 };
 $('cameraFilter').onchange = e => { cameraFilter = e.target.value; render() };
-function settingsNote() { const local = $('mode').value === 'local'; $('personLabelsLabel').hidden = false; $('modelLabel').style.display = local ? 'block' : 'none'; $('model').required = local; $('settingsNote').textContent = local ? `Custom prompt · ${state.frameLimit} frames · 600 output tokens. Smaller models may produce different results.` : 'Qwen3 notebook backend · 150 frames · Screening settings included.' }
+function settingsNote() { const local = $('mode').value === 'local'; $('thresholdNote').textContent = 'Person threshold: YOLO box confidence, or LLM p(yes). Suspicious threshold: flag when p(yes) is at least this value; needs token probabilities from the backend, otherwise the model\'s own yes/no is used. The agent and the LLM detector need Ollama mode. Applies to new runs.'; $('personLabelsLabel').hidden = false; $('modelLabel').style.display = local ? 'block' : 'none'; $('model').required = local; $('settingsNote').textContent = local ? `Custom prompt · ${state.frameLimit} frames · 600 output tokens. Smaller models may produce different results.` : 'Qwen3 notebook backend · 150 frames · Screening settings included.' }
 let modelListRequest = 0;
 function setModelOptions(models, current) {
     const choices = [...new Set([...(current ? [current] : []), ...models])];
@@ -191,6 +195,10 @@ $('settingsButton').onclick = () => {
     $('mode').value = state.settings.mode; $('endpoint').value = state.settings.endpoint;
     setModelOptions([], state.settings.model); $('personLabels').checked = state.settings.personLabels !== false;
     $('batchProcessing').checked = state.settings.batchProcessing === true;
+    $('personDetector').value = state.settings.personDetector || 'yolo';
+    $('personThreshold').value = state.settings.personThreshold ?? 0.25;
+    $('suspiciousThreshold').value = state.settings.suspiciousThreshold ?? 0.5;
+    $('agentEnabled').checked = state.settings.agentEnabled !== false;
     $('flagActivity').value = state.settings.flagActivity || '';
     $('siteContextEnabled').checked = state.settings.siteContextEnabled === true;
     $('siteContext').value = state.settings.siteContext || '';
@@ -202,7 +210,8 @@ $('refreshModels').onclick = loadModels;
 $('endpoint').onchange = loadModels;
 $('mode').onchange = () => { modelListRequest++; $('refreshModels').disabled = false; $('endpoint').value = $('mode').value === 'local' ? 'http://127.0.0.1:11434/v1' : ''; settingsNote(); loadModels() };
 $('close').onclick = () => $('settings').close();
-$('settingsForm').onsubmit = async e => { e.preventDefault(); try { await api('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: $('mode').value, endpoint: $('endpoint').value, model: $('model').value, personLabels: $('personLabels').checked, batchProcessing: $('batchProcessing').checked, flagActivity: $('flagActivity').value, siteContextEnabled: $('siteContextEnabled').checked, siteContext: $('siteContext').value, weaponEnabled: $('weaponEnabled').checked }) }); $('settings').close(); await refresh(); toast('Settings saved.') } catch (e) { $('settingsError').textContent = e.message } };
+const thresholdValue = id => { const v = parseFloat($(id).value); if (!Number.isFinite(v) || v < 0 || v > 1) throw Error('Thresholds must be numbers between 0 and 1.'); return v };
+$('settingsForm').onsubmit = async e => { e.preventDefault(); try { await api('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: $('mode').value, endpoint: $('endpoint').value, model: $('model').value, personLabels: $('personLabels').checked, batchProcessing: $('batchProcessing').checked, flagActivity: $('flagActivity').value, siteContextEnabled: $('siteContextEnabled').checked, siteContext: $('siteContext').value, weaponEnabled: $('weaponEnabled').checked, personDetector: $('personDetector').value, personThreshold: thresholdValue('personThreshold'), suspiciousThreshold: thresholdValue('suspiciousThreshold'), agentEnabled: $('agentEnabled').checked }) }); $('settings').close(); await refresh(); toast('Settings saved.') } catch (e) { $('settingsError').textContent = e.message } };
 document.addEventListener('click', async e => {
     const action = e.target.closest('[data-action]'); if (action) { try { await api(`/api/videos/${action.dataset.id}/${action.dataset.action}`, { method: 'POST' }); await refresh() } catch (e) { toast(e.message) } return }
     const review = e.target.closest('[data-review]');

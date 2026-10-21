@@ -8,7 +8,9 @@ public static class JobExporter
     [
         "id", "camera", "segment_start", "segment_end", "file", "duration_s", "status", "stage",
         "suspicious", "weapon", "flagged", "review", "description", "error",
-        "notified_at", "notify_error", "model", "backend", "elapsed_s", "no_people", "created"
+        "notified_at", "notify_error", "model", "backend", "elapsed_s", "no_people", "created",
+        "person_detector", "person_threshold", "person_max_score", "suspicious_score", "suspicious_threshold",
+        "suspicious_model_answer", "score_source", "agent_action", "agent_urgency", "agent_fallback"
     ];
 
     public static bool IsFlagged(VideoJob j) => j.Status == "completed" && (j.Suspicious == "yes" || j.Weapon == "yes");
@@ -25,6 +27,8 @@ public static class JobExporter
     private static string Iso(DateTimeOffset? t) => t?.ToString("o", CultureInfo.InvariantCulture) ?? "";
     private static string Num(double v) => v.ToString("0.##", CultureInfo.InvariantCulture);
 
+    private static string Score(double? v) => v is { } d ? d.ToString("0.####", CultureInfo.InvariantCulture) : "";
+
     private static string? WeaponOf(VideoJob j) => j.WeaponEnabled ? j.Weapon : "disabled";
 
     private static string[] Row(VideoJob j) =>
@@ -34,7 +38,12 @@ public static class JobExporter
         j.Suspicious ?? "", WeaponOf(j) ?? "", IsFlagged(j) ? "yes" : "no", j.ReviewState ?? "",
         j.Description ?? "", j.Error ?? "",
         Iso(j.NotifiedAt), j.NotifyError ?? "", j.Model ?? "", j.BackendMode ?? "",
-        j.Elapsed is { } e ? Num(e) : "", j.NoPeople ? "yes" : "no", Iso(j.Created)
+        j.Elapsed is { } e ? Num(e) : "", j.NoPeople ? "yes" : "no", Iso(j.Created),
+        j.Screening?.PersonDetector ?? "", Score(j.Screening?.PersonThreshold), Score(j.Screening?.PersonMaxScore),
+        Score(j.Screening?.SuspiciousScore), Score(j.Screening?.SuspiciousThreshold),
+        j.Screening?.SuspiciousModelAnswer ?? "", j.Screening?.ScoreSource ?? "",
+        j.Screening?.Agent?.Action ?? "", j.Screening?.Agent?.Urgency ?? "",
+        j.Screening?.Agent is { } agent ? (agent.FallbackUsed ? "yes" : "no") : ""
     ];
 
     public static byte[] ToCsv(IEnumerable<VideoJob> jobs)
@@ -75,7 +84,8 @@ public static class JobExporter
             backend = j.BackendMode,
             elapsedSeconds = j.Elapsed,
             noPeople = j.NoPeople,
-            created = j.Created
+            created = j.Created,
+            screening = j.Screening
         }).ToList();
         return JsonSerializer.SerializeToUtf8Bytes(new { exportedAt = now, count = rows.Count, jobs = rows },
             new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true });

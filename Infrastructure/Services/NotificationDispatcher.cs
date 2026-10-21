@@ -26,6 +26,8 @@ public sealed class NotificationDispatcher : BackgroundService
 
     public string ReviewUrl => options.ReviewBaseUrl;
 
+    public IReadOnlyList<string> EnabledChannels() => notifiers.Where(n => n.Enabled).Select(n => n.Name).ToList();
+
     public void EnqueueSystem(NotificationPayload payload) => queue.Writer.TryWrite(payload);
 
     public void EnqueueFailure(VideoJob job)
@@ -37,13 +39,14 @@ public sealed class NotificationDispatcher : BackgroundService
             $"{options.ReviewBaseUrl.TrimEnd('/')}/#job={job.Id}", 0, AlertKind.JobFailed));
     }
 
-    public void Enqueue(VideoJob job)
+    public void Enqueue(VideoJob job, AgentDecision? decision = null)
     {
         var description = job.Description ?? "";
         if (description.Length > options.MaxDescriptionChars) description = description[..options.MaxDescriptionChars] + "…";
         queue.Writer.TryWrite(new NotificationPayload(job.Id, job.CameraName ?? "(kamera tidak diketahui)",
             job.SegmentStart ?? job.Created, description, job.Suspicious == "yes", job.Weapon == "yes",
-            $"{options.ReviewBaseUrl.TrimEnd('/')}/#job={job.Id}"));
+            $"{options.ReviewBaseUrl.TrimEnd('/')}/#job={job.Id}", 0, AlertKind.Flag,
+            decision?.Urgency, decision?.Summary, AgentPolicy.Route(decision)));
     }
 
     // Backs the "Test notification" button. Bypasses throttle and does not touch any job.
@@ -70,7 +73,8 @@ public sealed class NotificationDispatcher : BackgroundService
             {
                 try
                 {
-                    if (payload.Kind is AlertKind.CameraOffline or AlertKind.CameraRecovered)
+                    // A critical alert is never held back by the per-camera throttle.
+                    if (payload.Kind is AlertKind.CameraOffline or AlertKind.CameraRecovered || payload.Urgency == AgentUrgency.Critical)
                     {
                         await Deliver(payload, [payload], stoppingToken);
                         continue;
@@ -79,7 +83,8 @@ public sealed class NotificationDispatcher : BackgroundService
                     lock (gate)
                     {
                         // Separate throttle per kind, so a failure digest never swallows a flag alert.
-                        var key = $"{payload.Kind}|{payload.CameraName}";
+                        // Alerts routed to different channels are throttled separately, so a digest never drops a channel.
+                        var key = $"{payload.Kind}|{payload.CameraName}|{string.Join(',', payload.Channels ?? Array.Empty<string>())}";
                         if (!cameras.TryGetValue(key, out var cam)) cameras[key] = cam = new Camera();
                         var now = DateTimeOffset.UtcNow;
                         sendNow = cam.Held.Count == 0 && now - cam.LastSent >= options.ThrottleWindow;
@@ -125,7 +130,7 @@ public sealed class NotificationDispatcher : BackgroundService
 
     private async Task Deliver(NotificationPayload message, List<NotificationPayload> covered, CancellationToken ct)
     {
-        var active = notifiers.Where(n => n.Enabled).ToList();
+        var active = notifiers.Where(n => n.Enabled && (message.Channels is null || message.Channels.Contains(n.Name))).ToList();
         var sentBy = new HashSet<string>();
         var failures = new List<string>();
         foreach (var notifier in active)

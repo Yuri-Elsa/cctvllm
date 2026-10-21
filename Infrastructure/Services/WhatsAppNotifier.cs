@@ -128,7 +128,7 @@ public sealed partial class WhatsAppNotifier(HttpClient http, IOptions<WhatsAppO
         sb.AppendLine(p.Subject());
         sb.AppendLine($"Waktu: {p.Time.ToLocalTime():dd/MM/yyyy HH:mm:ss}");
         if (p.IsModelFlag) sb.AppendLine($"Suspicious: {(p.Suspicious ? "ya" : "tidak")} | Weapon: {(p.Weapon ? "ya" : "tidak")}");
-        sb.AppendLine(p.Description);
+        sb.AppendLine(Message(p));
         sb.AppendLine($"Tinjau: {p.ReviewUrl}");
         if (p.IsModelFlag) sb.Append(NotificationPayload.Disclaimer);
         return sb.ToString().TrimEnd();
@@ -136,8 +136,10 @@ public sealed partial class WhatsAppNotifier(HttpClient http, IOptions<WhatsAppO
 
     private static string Summary(NotificationPayload p) =>
         p.IsModelFlag
-            ? $"Suspicious: {(p.Suspicious ? "ya" : "tidak")}, Weapon: {(p.Weapon ? "ya" : "tidak")}. {p.Description}"
+            ? $"Suspicious: {(p.Suspicious ? "ya" : "tidak")}, Weapon: {(p.Weapon ? "ya" : "tidak")}. {Message(p)}"
             : p.Description;
+
+    private static string Message(NotificationPayload p) => string.IsNullOrWhiteSpace(p.Summary) ? p.Description : p.Summary;
 
     private static string Param(string value, int max) => Cut(Whitespace().Replace(value, " ").Trim(), max) is { Length: > 0 } s ? s : "-";
 

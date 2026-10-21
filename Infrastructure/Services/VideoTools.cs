@@ -55,6 +55,19 @@ public sealed class VideoTools(IWebHostEnvironment env)
         if (r.Code != 0 || !File.Exists(output)) throw new UserError("Could not decode this video.", 422);
     }
 
+    public async Task<(string[] Paths, double[] Timestamps)> SampleFrames(string videoPath, string folder, double interval, CancellationToken ct)
+    {
+        var output = Path.Combine(folder, "llm-frames");
+        if (Directory.Exists(output)) Directory.Delete(output, true);
+        Directory.CreateDirectory(output);
+        var rate = (1 / interval).ToString("0.######", CultureInfo.InvariantCulture);
+        var filter = $"fps={rate},scale=w='if(gte(iw,ih),min(640,iw),trunc(iw*min(1,640/ih)))':h='if(gte(iw,ih),trunc(ih*min(1,640/iw)),min(640,ih))':flags=area";
+        var r = await Run(["-y", "-i", videoPath, "-vf", filter, "-frames:v", MaxFrames.ToString(CultureInfo.InvariantCulture), Path.Combine(output, "%04d.png")], ct);
+        var all = Directory.GetFiles(output, "*.png").Order().ToArray();
+        if (r.Code != 0 || all.Length == 0) throw new UserError("Could not extract video frames.", 422);
+        return (all, Enumerable.Range(0, all.Length).Select(i => Math.Round(i * interval, 2)).ToArray());
+    }
+
     public async Task<(string[] Paths, double[] Timestamps)> Frames(string folder, double fps, CancellationToken ct)
     {
         var output = Path.Combine(folder, "frames");

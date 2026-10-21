@@ -13,8 +13,8 @@ public sealed class PersonTracking
         Path.GetFullPath(Path.Combine(root, "../../work/yolo-env/bin/python"));
     public static string WeightsPath(string root) => Path.Combine(root, "tracking/yolov8n.pt");
 
-    public static async Task<(string[] Paths, string[] PlainPaths, double[] Timestamps, string Evidence, string Motion)> Run(
-        string root, string folder, string videoPath, double fps, CancellationToken ct)
+    public static async Task<(string[] Paths, string[] PlainPaths, double[] Timestamps, string Evidence, string Motion, PersonSample[] Samples)> Run(
+        string root, string folder, string videoPath, double fps, double conf, double modelMinGap, CancellationToken ct)
     {
         var python = PythonPath(root);
         var weights = WeightsPath(root);
@@ -30,7 +30,8 @@ public sealed class PersonTracking
             fps,
             max_frames = VideoTools.MaxFrames,
             sample_interval = SampleInterval,
-            model_min_gap = ModelMinGap
+            model_min_gap = modelMinGap,
+            conf
         }), ct);
         using var process = new Process
         {
@@ -72,6 +73,9 @@ public sealed class PersonTracking
         var framesElement = resultRoot.ValueKind == JsonValueKind.Object ? resultRoot.GetProperty("frames") : resultRoot;
         var motion = resultRoot.ValueKind == JsonValueKind.Object && resultRoot.TryGetProperty("motion", out var timeline)
             ? timeline.GetRawText() : "[]";
+        var samples = resultRoot.ValueKind == JsonValueKind.Object && resultRoot.TryGetProperty("samples", out var sampleList) && sampleList.ValueKind == JsonValueKind.Array
+            ? sampleList.EnumerateArray().Select(s => new PersonSample(s.GetProperty("timestamp").GetDouble(), s.GetProperty("score").GetDouble())).ToArray()
+            : Array.Empty<PersonSample>();
         var records = framesElement.EnumerateArray().ToArray();
         if (records.Length > VideoTools.MaxFrames) throw new UserError("Person detection exceeded the frame cap.", 502);
         records = records.Where(r => r.GetProperty("people").GetArrayLength() > 0).ToArray();
@@ -79,6 +83,6 @@ public sealed class PersonTracking
             JsonSerializer.Serialize(records.Select(r => new {
                 timestamp = r.GetProperty("timestamp").GetDouble(),
                 people = r.GetProperty("people").Clone()
-            })), motion);
+            })), motion, samples);
     }
 }

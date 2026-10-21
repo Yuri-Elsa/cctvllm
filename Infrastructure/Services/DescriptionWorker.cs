@@ -5,7 +5,8 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 
 public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clients,
-    IWebHostEnvironment env, ILogger<DescriptionWorker> logger, NotificationDispatcher notifications) : BackgroundService
+    IWebHostEnvironment env, ILogger<DescriptionWorker> logger, NotificationDispatcher notifications,
+    VideoTools videos, FlagNotifier flags) : BackgroundService
 {
     private readonly object gate = new();
     private CancellationTokenSource? current;
@@ -43,26 +44,7 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
             {
                 var token = current!.Token;
                 var result = config.Mode == "notebook" ? await Notebook(job, config, token) : await Local(job, config, token);
-                lock (gate)
-                {
-                    token.ThrowIfCancellationRequested();
-                    store.Update(job.Id, j => j with
-                    {
-                        Status = "completed",
-                        Stage = "Completed",
-                        Description = result.Description,
-                        Suspicious = result.Suspicious,
-                        Weapon = config.WeaponEnabled ? result.Weapon : null,
-                        WeaponEnabled = config.WeaponEnabled,
-                        RawText = result.Raw,
-                        Timestamps = result.Timestamps,
-                        Model = result.ModelName ?? (config.Mode == "local" ? config.Model : "Notebook backend"),
-                        BackendMode = config.Mode,
-                        PersonLabels = config.PersonLabels,
-                        Elapsed = Math.Round(watch.Elapsed.TotalSeconds, 1),
-                        NoPeople = result.NoPeople
-                    });
-                }
+                CommitResult(job.Id, config, result, watch.Elapsed.TotalSeconds, token);
                 var finished = store.Get(job.Id);
                 if (finished.CameraName is not null && finished.SegmentStart is { } start)
                 {
@@ -73,7 +55,7 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
                     logger.LogInformation("Latency {Camera} {Video}: total {Total:0}s after the clip ended (ingest {Ingest:0}s, wait {Wait:0}s, process {Process:0}s)",
                         finished.CameraName, finished.Name, (now - clipEnd).TotalSeconds, (finished.Created - clipEnd).TotalSeconds, wait, process);
                 }
-                if (new[] { finished }.Flagged().Any()) notifications.Enqueue(finished);
+                await flags.NotifyAsync(finished, config, (id, ct) => ReanalyzeWithMoreFrames(id, config, ct), stoppingToken);
             }
             catch (OperationCanceledException)
             {
@@ -95,6 +77,53 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
             }
         }
     }
+    private void CommitResult(string id, ModelSettings config, DescriptionResult result, double elapsedSeconds, CancellationToken token)
+    {
+        lock (gate)
+        {
+            token.ThrowIfCancellationRequested();
+            store.Update(id, j => j with
+            {
+                Status = "completed",
+                Stage = "Completed",
+                Description = result.Description,
+                Suspicious = result.Suspicious,
+                Weapon = config.WeaponEnabled ? result.Weapon : null,
+                WeaponEnabled = config.WeaponEnabled,
+                RawText = result.Raw,
+                Timestamps = result.Timestamps,
+                Model = result.ModelName ?? (config.Mode == "local" ? config.Model : "Notebook backend"),
+                BackendMode = config.Mode,
+                PersonLabels = config.PersonLabels,
+                Elapsed = Math.Round(elapsedSeconds, 1),
+                NoPeople = result.NoPeople,
+                Screening = ScreeningFor(config, result)
+            });
+        }
+    }
+    private static ScreeningLog ScreeningFor(ModelSettings config, DescriptionResult r) => (r.Person ?? new ScreeningLog()) with
+    {
+        SuspiciousScore = r.SuspiciousScore,
+        SuspiciousThreshold = config.SuspiciousThreshold,
+        SuspiciousModelAnswer = r.ModelSuspicious ?? r.Suspicious,
+        SuspiciousDecision = r.Suspicious,
+        ScoreSource = r.ScoreSource ?? "none"
+    };
+    private async Task ReanalyzeWithMoreFrames(string id, ModelSettings config, CancellationToken ct)
+    {
+        var before = store.Get(id);
+        var watch = Stopwatch.StartNew();
+        try
+        {
+            var result = await Local(before, config, ct, PersonTracking.ModelMinGap / 2);
+            CommitResult(id, config, result, (before.Elapsed ?? 0) + watch.Elapsed.TotalSeconds, ct);
+        }
+        catch
+        {
+            store.Update(id, _ => before);
+            throw;
+        }
+    }
     private HttpClient Client()
     {
         var c = clients.CreateClient("model");
@@ -102,7 +131,7 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
         if (!string.IsNullOrWhiteSpace(key)) c.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", key);
         return c;
     }
-    private static async Task<JsonDocument> ReadResponse(HttpResponseMessage response, CancellationToken ct)
+    internal static async Task<JsonDocument> ReadResponse(HttpResponseMessage response, CancellationToken ct)
     {
         var text = await response.Content.ReadAsStringAsync(ct);
         if (!response.IsSuccessStatusCode)
@@ -122,21 +151,36 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
         }
         return JsonDocument.Parse(text);
     }
-    private async Task<DescriptionResult> Local(VideoJob job, ModelSettings config, CancellationToken ct)
+    private async Task<DescriptionResult> Local(VideoJob job, ModelSettings config, CancellationToken ct, double modelGap = PersonTracking.ModelMinGap)
     {
         store.Update(job.Id, j => j with { Stage = "Detecting people" });
-        var tracked = await PersonTracking.Run(env.ContentRootPath, store.Folder(job.Id), store.VideoPath(job), job.Fps, ct);
+        var llmDetector = config.PersonDetector == "llm";
+        var tracked = llmDetector
+            ? await LlmPersonDetector.Run(videos, clients, job, store.VideoPath(job), store.Folder(job.Id), config, modelGap,
+                stage => store.Update(job.Id, j => j with { Stage = stage }), ct)
+            : await PersonTracking.Run(env.ContentRootPath, store.Folder(job.Id), store.VideoPath(job), job.Fps, config.PersonThreshold, modelGap, ct);
         var timestamps = tracked.Timestamps;
         store.Update(job.Id, j => j with { Timestamps = timestamps });
+        var person = new ScreeningLog
+        {
+            PersonDetector = llmDetector ? "llm" : "yolo",
+            PersonThreshold = config.PersonThreshold,
+            PersonMaxScore = tracked.Samples.Length == 0 ? null : tracked.Samples.Max(x => x.Score),
+            PersonSampled = tracked.Samples.Length,
+            PersonKept = timestamps.Length,
+            PersonSamples = tracked.Samples
+        };
         // Nobody in the video is a normal result, not a failure: the job completes, is not flagged,
         // and no frames are sent to the model.
         if (timestamps.Length == 0)
             return new DescriptionResult("Tidak ada orang terdeteksi pada frame yang diperiksa, sehingga tidak ada gambar yang dikirim ke model.",
-                "no", config.WeaponEnabled ? "no" : null, "", [], "Person detection only", NoPeople: true);
-        var paths = config.PersonLabels ? tracked.Paths :
+                "no", config.WeaponEnabled ? "no" : null, "", [], "Person detection only", NoPeople: true, Person: person);
+        // The LLM detector has no boxes or motion data, so its frames are always sent plain.
+        var paths = config.PersonLabels && !llmDetector ? tracked.Paths :
             tracked.PlainPaths;
-        var result = await DescribeBatches(job, config, paths, timestamps,
-            config.PersonLabels ? tracked.Evidence : null, tracked.Motion, ct);
+        var result = (await DescribeBatches(job, config, paths, timestamps,
+            config.PersonLabels && !llmDetector ? tracked.Evidence : null, tracked.Motion, ct)) with
+        { Person = person };
         return string.IsNullOrWhiteSpace(config.FlagActivity)
             ? result : await ReviewCustomFlag(job, config, result, ct);
     }
@@ -216,7 +260,10 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
                 summary = result with
                 {
                     Suspicious = summary?.Suspicious == "yes" || result.Suspicious == "yes" ? "yes" : "no",
-                    Weapon = !config.WeaponEnabled ? null : summary?.Weapon == "yes" || result.Weapon == "yes" ? "yes" : "no"
+                    Weapon = !config.WeaponEnabled ? null : summary?.Weapon == "yes" || result.Weapon == "yes" ? "yes" : "no",
+                    SuspiciousScore = MaxScore(summary?.SuspiciousScore, result.SuspiciousScore),
+                    ModelSuspicious = summary?.ModelSuspicious == "yes" || result.ModelSuspicious == "yes" ? "yes" : "no",
+                    ScoreSource = result.ScoreSource ?? summary?.ScoreSource
                 };
                 processed += count;
                 await File.WriteAllTextAsync(Path.Combine(store.Folder(job.Id), "batch-responses.json"),
@@ -245,6 +292,7 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
         });
         return summary with { Timestamps = timestamps, Raw = raw };
     }
+    private static double? MaxScore(double? a, double? b) => a is null ? b : b is null ? a : Math.Max(a.Value, b.Value);
     private async Task<DescriptionResult> DescribeImages(VideoJob job, ModelSettings config,
         string[] paths, double[] timestamps, string? evidence, string? motion, string? previous, CancellationToken ct)
     {
@@ -300,7 +348,7 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
             "Sekarang jawab berdasarkan gambar-gambar di atas dengan mengikuti instruksi pada pesan sebelumnya."
         });
         using var client = Client();
-        using var response = await SendModel(client, config, new
+        object Request(bool scores) => new
         {
             model = config.Model,
             messages = new object[] {
@@ -345,9 +393,11 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
             frequency_penalty = 0.7,
             presence_penalty = 0.3,
             seed = 7,
-            reasoning_effort = "none"
-        }, ct);
-        using var doc = await ReadResponse(response, ct);
+            reasoning_effort = "none",
+            logprobs = scores,
+            top_logprobs = scores ? Scoring.TopLogprobs : 0
+        };
+        using var doc = await ModelCalls.Ask(client, config, Request, true, ct);
         await File.WriteAllTextAsync(Path.Combine(store.Folder(job.Id), "last-model-response.json"), doc.RootElement.GetRawText(), ct);
         var choice = doc.RootElement.GetProperty("choices")[0];
         var message = choice.GetProperty("message");
@@ -367,7 +417,11 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
         if (string.IsNullOrWhiteSpace(raw))
             throw new UserError("The model returned an empty answer. No description or flags were generated. Server diagnostics were saved.", 502);
         using var parsed = ParseObject(raw);
-        return ParseResult(parsed.RootElement, raw, timestamps, config.WeaponEnabled);
+        var answer = ParseResult(parsed.RootElement, raw, timestamps, config.WeaponEnabled);
+        // Flag decision: p_yes >= SuspiciousThreshold when probabilities are available, else the model's own yes/no.
+        var score = Scoring.PYes(choice, "suspicious");
+        var (decision, used) = Scoring.Decide(answer.Suspicious!, score, config.SuspiciousThreshold);
+        return answer with { Suspicious = decision, ModelSuspicious = answer.Suspicious, SuspiciousScore = used, ScoreSource = used is null ? null : "logprobs" };
     }
     private async Task<DescriptionResult> ReviewCustomFlag(VideoJob job, ModelSettings config,
         DescriptionResult result, CancellationToken ct)
@@ -452,7 +506,7 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
         };
     }
 
-    private static async Task<HttpResponseMessage> SendModel(HttpClient client, ModelSettings config, object payload, CancellationToken ct)
+    internal static async Task<HttpResponseMessage> SendModel(HttpClient client, ModelSettings config, object payload, CancellationToken ct)
     {
         var uri = new Uri(config.Endpoint);
         if (!config.Model.StartsWith("qwen", StringComparison.OrdinalIgnoreCase) || uri.Port != 11434)
@@ -477,12 +531,15 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
             if (images.Length > 0) nativeMessage["images"] = images;
             return nativeMessage;
         }).ToArray();
+        var wantLogprobs = root.TryGetProperty("logprobs", out var logprobsFlag) && logprobsFlag.ValueKind == JsonValueKind.True;
         using var native = await client.PostAsJsonAsync(new Uri(uri, "/api/chat"), new
         {
             model = config.Model,
             messages,
             stream = false,
             think = false,
+            logprobs = wantLogprobs,
+            top_logprobs = wantLogprobs ? Scoring.TopLogprobs : 0,
             format = root.GetProperty("response_format").GetProperty("json_schema").GetProperty("schema"),
             options = new
             {
@@ -507,11 +564,14 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
         if (string.IsNullOrWhiteSpace(contentText) && answer.TryGetProperty("thinking", out var thinking))
             contentText = thinking.GetString() ?? "";
         var finish = result.RootElement.TryGetProperty("done_reason", out var reason) ? reason.GetString() : null;
+        // Ollama returns token log-probabilities at the top level; hand them on in the OpenAI shape Scoring reads.
+        object? nativeLogprobs = result.RootElement.TryGetProperty("logprobs", out var logprobArray) && logprobArray.ValueKind == JsonValueKind.Array
+            ? new { content = logprobArray.Clone() } : null;
         return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
         {
             Content = new StringContent(JsonSerializer.Serialize(new
             {
-                choices = new[] { new { message = new { content = contentText }, finish_reason = finish } },
+                choices = new[] { new { message = new { content = contentText }, finish_reason = finish, logprobs = nativeLogprobs } },
                 ollama_response = result.RootElement.Clone()
             }), Encoding.UTF8, "application/json")
         };
@@ -543,9 +603,19 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
         using var doc = await ReadResponse(response, ct);
         var data = doc.RootElement;
         var stamps = data.TryGetProperty("timestamps", out var ts) ? ts.EnumerateArray().Select(x => x.GetDouble()).ToArray() : [];
-        return ParseResult(data, data.TryGetProperty("raw_text", out var raw) ? raw.GetString() ?? "" : "", stamps, config.WeaponEnabled)
-            with
-        { ModelName = data.TryGetProperty("model", out var model) ? model.GetString() : "Notebook backend" };
+        var parsedResult = ParseResult(data, data.TryGetProperty("raw_text", out var raw) ? raw.GetString() ?? "" : "", stamps, config.WeaponEnabled);
+        double? notebookScore = data.TryGetProperty("suspicious_score", out var scoreValue) && scoreValue.ValueKind == JsonValueKind.Number
+            ? scoreValue.GetDouble() : null;
+        var (decision, used) = Scoring.Decide(parsedResult.Suspicious!, notebookScore, config.SuspiciousThreshold);
+        return parsedResult with
+        {
+            ModelName = data.TryGetProperty("model", out var model) ? model.GetString() : "Notebook backend",
+            Suspicious = decision,
+            ModelSuspicious = parsedResult.Suspicious,
+            SuspiciousScore = used,
+            ScoreSource = used is null ? null : "notebook",
+            Person = new ScreeningLog { PersonDetector = "notebook" }
+        };
     }
     private static DescriptionResult ParseResult(JsonElement root, string raw, double[] timestamps, bool weaponEnabled = true)
     {
@@ -562,7 +632,7 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
         }
         return new(description, Flag("suspicious"), weaponEnabled ? Flag("weapon") : null, raw, timestamps);
     }
-    private static JsonDocument ParseObject(string text)
+    internal static JsonDocument ParseObject(string text)
     {
         for (var i = 0; i < text.Length; i++)
         {
@@ -578,5 +648,6 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
         }
         throw new UserError("The model returned incomplete or invalid JSON. Its raw response was saved; retry this video.", 502);
     }
-    private sealed record DescriptionResult(string Description, string? Suspicious, string? Weapon, string Raw, double[] Timestamps, string? ModelName = null, bool NoPeople = false);
+    private sealed record DescriptionResult(string Description, string? Suspicious, string? Weapon, string Raw, double[] Timestamps, string? ModelName = null, bool NoPeople = false,
+        double? SuspiciousScore = null, string? ModelSuspicious = null, string? ScoreSource = null, ScreeningLog? Person = null);
 }

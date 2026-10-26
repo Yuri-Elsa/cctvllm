@@ -1,0 +1,11 @@
+{
+  "mode": "local",
+  "endpoint": "http://127.0.0.1:11434/v1",
+  "model": "ISI-DENGAN-MODEL-YANG-DIPUTUSKAN",
+  "personLabels": true,
+  "flagActivity": "",
+  "siteContextEnabled": false,
+  "siteContext": "",
+  "weaponEnabled": true,
+  "batchProcessing": false
+}

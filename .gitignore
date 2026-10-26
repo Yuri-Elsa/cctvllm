@@ -29,3 +29,9 @@ Thumbs.db
 .idea/
 .vscode/
 .ipynb_checkpoints/
+
+paths.txt
+benchmark/
+Ultralytics/
+tracking/.config/ 
+eval/runs/

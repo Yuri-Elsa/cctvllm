@@ -5,11 +5,21 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.HttpOverrides;
 
 var builder = WebApplication.CreateBuilder(args);
 var auth = new AuthOptions();
 builder.WebHost.UseUrls(Environment.GetEnvironmentVariable("CCTV_URL") ?? "http://127.0.0.1:8766");
 builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = VideoTools.MaxBytes);
+// Behind a reverse proxy (HTTPS termination) set CCTV_TRUST_PROXY=1 so the real scheme, host and client
+// address are used: the Secure cookie flag, the login throttle and the origin check all depend on them.
+// Only enable it when the app is reachable through the proxy alone, otherwise clients could spoof the headers.
+var trustProxy = Environment.GetEnvironmentVariable("CCTV_TRUST_PROXY") is "1" or "true";
+if (trustProxy)
+    builder.Services.Configure<ForwardedHeadersOptions>(o => {
+        o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost;
+        o.KnownNetworks.Clear(); o.KnownProxies.Clear();
+    });
 builder.Services.AddControllersWithViews().AddRazorOptions(options => {
     options.ViewLocationFormats.Clear();
     options.ViewLocationFormats.Add("/Web/Views/{1}/{0}.cshtml");
@@ -22,6 +32,7 @@ if (auth.Enabled)
         o.Cookie.Name = "cctv_auth";
         o.Cookie.HttpOnly = true;
         o.Cookie.SameSite = SameSiteMode.Strict;
+        o.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;   // Secure once the request is HTTPS (see CCTV_TRUST_PROXY)
         o.LoginPath = "/Account/Login";
         o.ExpireTimeSpan = TimeSpan.FromHours(12);
         o.SlidingExpiration = true;
@@ -70,9 +81,16 @@ builder.Services.AddSingleton<FlagNotifier>();
 builder.Services.AddSingleton<DescriptionWorker>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DescriptionWorker>());
 var app = builder.Build();
+if (trustProxy) app.UseForwardedHeaders();
+var allowedHosts = HostGuard.Allowed(Environment.GetEnvironmentVariable("CCTV_URL"), Environment.GetEnvironmentVariable("CCTV_ALLOWED_HOSTS"));
 app.Use(async (ctx, next) => {
+    ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    if (!HostGuard.IsAllowed(ctx.Request.Host.Value, allowedHosts))
+    {
+        ctx.Response.StatusCode = 421; await ctx.Response.WriteAsJsonAsync(new { detail = "Unexpected Host header. Set CCTV_ALLOWED_HOSTS to the name you use to open the app." }); return;
+    }
     if (ctx.Request.Method != "GET" && ctx.Request.Method != "HEAD" &&
-        ctx.Request.Headers.Origin.Count > 0 && ctx.Request.Headers.Origin != $"{ctx.Request.Scheme}://{ctx.Request.Host}")
+        ctx.Request.Headers.Origin.Count > 0 && !HostGuard.SameOrigin(ctx.Request.Headers.Origin.ToString(), ctx.Request.Host.Value))
     {
         ctx.Response.StatusCode = 403; await ctx.Response.WriteAsJsonAsync(new { detail = "Cross-origin requests are not allowed." }); return;
     }
@@ -138,16 +156,14 @@ app.MapGet("/api/models", async (string? endpoint, IHttpClientFactory clients, C
 });
 app.MapPost("/api/settings", (ModelSettings value, QueueStore s) => {
     if (value.Mode is not ("local" or "notebook")) throw new UserError("Choose local model or notebook.");
-    if (!Uri.TryCreate(value.Endpoint, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || !string.IsNullOrEmpty(uri.UserInfo))
-        throw new UserError("Enter a valid server URL without embedded credentials.");
-    if (value.Mode == "local" && !uri.IsLoopback) throw new UserError("Local mode requires a localhost address.");
+    if (ModelEndpointPolicy.Check(value.Mode, value.Endpoint) is { } endpointProblem) throw new UserError(endpointProblem);
     if (value.Mode == "local" && string.IsNullOrWhiteSpace(value.Model)) throw new UserError("Enter a model name.");
     if (value.PersonDetector is not ("yolo" or "llm")) throw new UserError("Choose YOLO or LLM for person detection.");
     if (!(value.PersonThreshold is >= 0 and <= 1) || !(value.SuspiciousThreshold is >= 0 and <= 1))
         throw new UserError("Thresholds must be between 0 and 1.");
     if ((value.FlagActivity?.Length ?? 0) > 4000 || (value.SiteContext?.Length ?? 0) > 4000)
         throw new UserError("Criteria and context must each be 4,000 characters or less.");
-    s.SetSettings(value with { Endpoint = value.Endpoint.TrimEnd('/'), Model = value.Model.Trim() });
+    s.SetSettings(value with { Endpoint = value.Endpoint.TrimEnd('/'), Model = (value.Model ?? "").Trim() });
     return Results.Ok(new { ok = true });
 });
 app.MapPost("/api/videos", async (HttpRequest request, QueueStore s, VideoTools videos, CancellationToken ct) => {
@@ -196,7 +212,7 @@ app.MapPost("/api/folder/refresh", (QueueStore s, ScanCoordinator scans) => {
     return Results.Ok(new { importing = true });
 });
 app.MapGet("/api/folder/status", (ScanCoordinator scans) => scans.Status());
-app.MapGet("/api/videos/{id}/{asset}", (string id, string asset, QueueStore s) => {
+app.MapGet("/api/videos/{id}/{asset}", (string id, string asset, QueueStore s, HttpContext http) => {
     var job = s.Get(id);
     if (asset is not ("video" or "poster.jpg")) return Results.NotFound();
     var path = asset == "video" ? s.VideoPath(job) : Path.Combine(s.Folder(job.Id), asset);
@@ -204,7 +220,13 @@ app.MapGet("/api/videos/{id}/{asset}", (string id, string asset, QueueStore s) =
         throw new UserError(asset == "video" && job.SourcePath is not null
             ? "This video is no longer at its original path in the linked folder." : "File not found.", 404);
     var type = "image/jpeg";
-    if (asset == "video" && !new FileExtensionContentTypeProvider().TryGetContentType(job.Name, out type)) type = "video/mp4";
+    if (asset == "video")
+    {
+        // The name comes from the uploader, so never let it pick html/svg/js: only video/* is served.
+        if (!new FileExtensionContentTypeProvider().TryGetContentType(job.Name, out type) || !type.StartsWith("video/", StringComparison.Ordinal))
+            type = "video/mp4";
+    }
+    http.Response.Headers.ContentSecurityPolicy = "sandbox; default-src 'none'";
     return Results.File(path, type, enableRangeProcessing: true);
 });
 app.MapPost("/api/notifications/test", async (NotificationDispatcher d, CancellationToken ct) =>

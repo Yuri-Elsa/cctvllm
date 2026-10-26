@@ -508,6 +508,7 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
 
     internal static async Task<HttpResponseMessage> SendModel(HttpClient client, ModelSettings config, object payload, CancellationToken ct)
     {
+        ModelEndpointPolicy.Ensure(config);
         var uri = new Uri(config.Endpoint);
         if (!config.Model.StartsWith("qwen", StringComparison.OrdinalIgnoreCase) || uri.Port != 11434)
             return await client.PostAsJsonAsync(config.Endpoint.TrimEnd('/') + "/chat/completions", payload, ct);
@@ -578,6 +579,7 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
     }
     private async Task<DescriptionResult> Notebook(VideoJob job, ModelSettings config, CancellationToken ct)
     {
+        ModelEndpointPolicy.Ensure(config);
         store.Update(job.Id, j => j with { Stage = "Processing on notebook GPU" });
         using var client = Client();
         await using var file = File.OpenRead(store.VideoPath(job));

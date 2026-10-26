@@ -255,7 +255,10 @@ Applies **only to files in the RTSP folder**. Uploaded videos and files in a lin
 - With a password set, every page and API call needs a sign-in (12-hour cookie). Five wrong attempts lock an address out for five minutes. Changing the password signs everyone out. API calls without a session get `401`.
 - It is one shared password. The password is not encrypted over plain HTTP, so put the app behind HTTPS (a reverse proxy) before exposing it.
 - State-changing requests from another origin are rejected, and the _local_ model server must be a loopback address.
-- Only use trusted endpoints in notebook mode. Videos are sent to them.
+- Only use trusted endpoints in notebook mode. Videos are sent to them. A non-loopback notebook host is refused unless it is listed in `CCTV_NOTEBOOK_HOSTS` (comma separated) and uses HTTPS (`CCTV_NOTEBOOK_ALLOW_HTTP=1` allows plain HTTP on a trusted LAN). `CCTV_API_KEY` is only ever sent to the endpoint that passes this check.
+- The `Host` header is checked against DNS rebinding. Bound to loopback, only `localhost` and loopback addresses are accepted; to open the app under another name (for example through a reverse proxy) list it in `CCTV_ALLOWED_HOSTS`.
+- Behind a TLS-terminating reverse proxy set `CCTV_TRUST_PROXY=1` (and make sure the app is reachable only through the proxy) so the HTTPS scheme, host and client address are taken from `X-Forwarded-*`. The sign-in cookie then gets the `Secure` flag and the login lockout counts real client addresses.
+- Uploaded and linked files are opened by ffmpeg with a protocol and container whitelist (plain local files, common video containers), and video responses are served as `video/*` with `nosniff` and a sandbox CSP.
 - Per-user accounts and OpenID Connect are the planned next step (see `ADS-ARCHITECTURE.md`).
 
 ## Notebook GPU backend

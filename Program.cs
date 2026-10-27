@@ -10,7 +10,8 @@ using Microsoft.AspNetCore.HttpOverrides;
 var builder = WebApplication.CreateBuilder(args);
 var auth = new AuthOptions();
 builder.WebHost.UseUrls(Environment.GetEnvironmentVariable("CCTV_URL") ?? "http://127.0.0.1:8766");
-builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = VideoTools.MaxBytes);
+// Ordinary requests (settings, folder, review) are small JSON. Only the upload endpoint raises its own limit.
+builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 1024 * 1024);
 // Behind a reverse proxy (HTTPS termination) set CCTV_TRUST_PROXY=1 so the real scheme, host and client
 // address are used: the Secure cookie flag, the login throttle and the origin check all depend on them.
 // Only enable it when the app is reachable through the proxy alone, otherwise clients could spoof the headers.
@@ -18,7 +19,7 @@ var trustProxy = Environment.GetEnvironmentVariable("CCTV_TRUST_PROXY") is "1" o
 if (trustProxy)
     builder.Services.Configure<ForwardedHeadersOptions>(o => {
         o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost;
-        o.KnownNetworks.Clear(); o.KnownProxies.Clear();
+        o.KnownIPNetworks.Clear(); o.KnownProxies.Clear();
     });
 builder.Services.AddControllersWithViews().AddRazorOptions(options => {
     options.ViewLocationFormats.Clear();
@@ -85,6 +86,14 @@ if (trustProxy) app.UseForwardedHeaders();
 var allowedHosts = HostGuard.Allowed(Environment.GetEnvironmentVariable("CCTV_URL"), Environment.GetEnvironmentVariable("CCTV_ALLOWED_HOSTS"));
 app.Use(async (ctx, next) => {
     ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    // Stops other sites from framing the UI (clickjacking) and limits what the pages may load.
+    ctx.Response.Headers["X-Frame-Options"] = "DENY";
+    // Not "no-referrer": with that policy browsers send "Origin: null" on every POST, even to this same site,
+    // and the cross-origin check below would reject the login form and every other POST.
+    ctx.Response.Headers["Referrer-Policy"] = "same-origin";
+    ctx.Response.Headers.ContentSecurityPolicy =
+        "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; " +
+        "img-src 'self' data:; media-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
     if (!HostGuard.IsAllowed(ctx.Request.Host.Value, allowedHosts))
     {
         ctx.Response.StatusCode = 421; await ctx.Response.WriteAsJsonAsync(new { detail = "Unexpected Host header. Set CCTV_ALLOWED_HOSTS to the name you use to open the app." }); return;
@@ -116,15 +125,24 @@ string ResolveFolder(string raw)
     if (value.StartsWith('~'))
         value = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), value[1..].TrimStart('/'));
     if (!Path.IsPathRooted(value)) throw new UserError("Enter the folder's full path, starting with / or ~.");
+    // A network path makes Windows contact that server (and offer the user's credentials) just to check it exists.
+    if (OperatingSystem.IsWindows() && (value.StartsWith(@"\\") || value.StartsWith("//")) &&
+        Environment.GetEnvironmentVariable("CCTV_ALLOW_UNC") != "1")
+        throw new UserError("Network paths (\\\\server\\share) are blocked. Set CCTV_ALLOW_UNC=1 if you need one.");
     var full = Path.GetFullPath(value);
     if (!Directory.Exists(full)) throw new UserError("There is no folder at that path.", 404);
-    return full;
+    // Follow a link so that the "app's own data folder" check below sees where it really points.
+    return new DirectoryInfo(full).ResolveLinkTarget(true)?.FullName ?? full;
 }
 
 app.MapGet("/api/state", (QueueStore s) => s.Snapshot());
 app.MapGet("/api/cameras", (RtspIngestService r) => r.Snapshot());
 // preflight is the last startup check's overall result ("ok", "warn", "fail"), or null while the first one is still running.
-app.MapGet("/api/health", (Preflight p) => new { ok = true, backend = "ASP.NET Core", version = Environment.Version.ToString(), preflight = p.Latest?.Overall });
+// Open to anyone so a monitor can poll it without logging in; only a signed-in user (or an app without a password) sees details.
+app.MapGet("/api/health", (Preflight p, HttpContext http) =>
+    !auth.Enabled || http.User.Identity?.IsAuthenticated == true
+        ? Results.Ok(new { ok = true, backend = "ASP.NET Core", version = Environment.Version.ToString(), preflight = p.Latest?.Overall })
+        : Results.Ok(new { ok = true })).AllowAnonymous();
 // Full setup report. ?refresh=true runs the checks again (the "Run check" button in Settings).
 app.MapGet("/api/preflight", (bool? refresh, Preflight p, CancellationToken ct) => p.GetAsync(refresh == true, ct));
 app.MapGet("/api/models", async (string? endpoint, IHttpClientFactory clients, CancellationToken ct) => {
@@ -167,6 +185,11 @@ app.MapPost("/api/settings", (ModelSettings value, QueueStore s) => {
     return Results.Ok(new { ok = true });
 });
 app.MapPost("/api/videos", async (HttpRequest request, QueueStore s, VideoTools videos, CancellationToken ct) => {
+    if (request.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit) limit.MaxRequestBodySize = VideoTools.MaxBytes;
+    // Uploads are the only thing the retention service never cleans up, so give them a ceiling of their own.
+    var stored = s.Jobs().Where(j => j.SourcePath is null).Sum(j => j.Bytes);
+    if (stored >= VideoTools.MaxUploadBytes)
+        throw new UserError("Upload storage is full. Remove some videos first (limit: CCTV_MAX_UPLOAD_GB).", 507);
     var name = Path.GetFileName(Uri.UnescapeDataString(request.Headers["X-Filename"].FirstOrDefault() ?? "video.mp4"));
     if (name.Length > 200) name = name[..200];
     var job = new VideoJob { Id = Guid.NewGuid().ToString("N"), Name = name };
@@ -180,6 +203,7 @@ app.MapPost("/api/videos", async (HttpRequest request, QueueStore s, VideoTools 
             while ((n = await request.Body.ReadAsync(buffer, ct)) > 0)
             {
                 bytes += n; if (bytes > VideoTools.MaxBytes) throw new UserError("Maximum file size is 500 MB.", 413);
+                if (stored + bytes > VideoTools.MaxUploadBytes) throw new UserError("Upload storage is full. Remove some videos first (limit: CCTV_MAX_UPLOAD_GB).", 507);
                 await file.WriteAsync(buffer.AsMemory(0, n), ct);
             }
         }

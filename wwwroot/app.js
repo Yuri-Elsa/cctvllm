@@ -17,7 +17,7 @@ const segmentTime = iso => iso ? new Date(iso).toLocaleString([], { day: '2-digi
 const ago = iso => { if (!iso) return 'No data yet'; const s = Math.max(0, Math.round((Date.now() - new Date(iso)) / 1000)); return s < 5 ? 'just now' : s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : `${Math.floor(s / 86400)}d ago` };
 const REVIEW = { confirmed: 'Confirmed', false_alarm: 'False alarm' };
 function notifyInfo(j) {
-    if (j.notifiedAt) return { cls: j.notifyError ? 'warn' : 'ok', text: `Sent ${segmentTime(j.notifiedAt)}` + (j.notifyError ? ` · some channels failed: ${j.notifyError}` : '') };
+    if (j.notifiedAt) return { cls: j.notifyError ? 'warn' : 'ok', text: `Sent${j.screening && j.screening.agent && j.screening.agent.action === 'ignore' ? ' (low priority: agent judged it not urgent)' : ''} ${segmentTime(j.notifiedAt)}` + (j.notifyError ? ` · some channels failed: ${j.notifyError}` : '') };
     if (j.notifyError) return { cls: 'fail', text: `Not delivered: ${j.notifyError}` };
     const agent = j.screening && j.screening.agent;
     if (agent && agent.action === 'ignore') return { cls: 'ok', text: `Agent chose not to notify${agent.reason ? ': ' + agent.reason : ''}` };

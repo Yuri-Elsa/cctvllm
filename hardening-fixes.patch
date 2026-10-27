@@ -1,0 +1,179 @@
+diff --git a/EntityFramework/Repositories/QueueStore.cs b/EntityFramework/Repositories/QueueStore.cs
+index d125994..d6ecd82 100644
+--- a/EntityFramework/Repositories/QueueStore.cs
++++ b/EntityFramework/Repositories/QueueStore.cs
+@@ -16,12 +16,26 @@ public sealed class QueueStore : IQueueRepository
+     {
+         root = Environment.GetEnvironmentVariable("CCTV_DATA_DIR") ?? Path.Combine(env.ContentRootPath, "data");
+         Directory.CreateDirectory(root);
+-        if (File.Exists(Path.Combine(root, "state.json")))
++        var statePath = Path.Combine(root, "state.json");
++        if (File.Exists(statePath))
+         {
+-            var saved = JsonSerializer.Deserialize<StoredState>(File.ReadAllText(Path.Combine(root, "state.json")), Json)!;
+-            settings = saved.Settings;
+-            linkedFolder = saved.LinkedFolder;
+-            items = saved.Jobs.Select(j => j.Status == "processing" ? j with { Status = "queued", Stage = "Queued after restart" } : j).ToList();
++            try
++            {
++                var saved = JsonSerializer.Deserialize<StoredState>(File.ReadAllText(statePath), Json)
++                    ?? throw new JsonException("state.json is empty.");
++                settings = saved.Settings ?? new ModelSettings();
++                linkedFolder = saved.LinkedFolder;
++                items = (saved.Jobs ?? []).Select(j => j.Status == "processing" ? j with { Status = "queued", Stage = "Queued after restart" } : j).ToList();
++            }
++            catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
++            {
++                // A damaged state file must not stop the app (and with it the cameras) from starting.
++                // Keep the damaged copy for inspection and start with an empty queue.
++                var backup = Path.Combine(root, $"state.corrupt-{DateTime.Now:yyyyMMdd-HHmmss}.json");
++                try { File.Copy(statePath, backup, true); } catch (IOException) { }
++                Console.Error.WriteLine($"state.json could not be read ({ex.Message}). A copy was kept as {backup}; starting with an empty queue.");
++                settings = new ModelSettings(); linkedFolder = null; items = [];
++            }
+         }
+     }
+     private void Persist()
+diff --git a/Infrastructure/Helpers/ChildProcess.cs b/Infrastructure/Helpers/ChildProcess.cs
+new file mode 100644
+index 0000000..e4b0145
+--- /dev/null
++++ b/Infrastructure/Helpers/ChildProcess.cs
+@@ -0,0 +1,14 @@
++using System.Diagnostics;
++
++public static class ChildProcess
++{
++    // ffmpeg, the YOLO script and the preflight probes never need the app's own settings, but a child
++    // process inherits the whole environment by default: UI password, API key, WhatsApp token, SMTP
++    // password and RTSP URLs. ffmpeg parses untrusted uploads and ultralytics may reach the network,
++    // so nothing named CCTV_* is handed on.
++    public static void ScrubSecrets(ProcessStartInfo info)
++    {
++        foreach (var key in info.Environment.Keys.Where(k => k.StartsWith("CCTV_", StringComparison.OrdinalIgnoreCase)).ToList())
++            info.Environment.Remove(key);
++    }
++}
+diff --git a/Infrastructure/Services/PersonTracking.cs b/Infrastructure/Services/PersonTracking.cs
+index fa21eb4..96866fe 100644
+--- a/Infrastructure/Services/PersonTracking.cs
++++ b/Infrastructure/Services/PersonTracking.cs
+@@ -45,7 +45,11 @@ public sealed class PersonTracking
+         };
+         foreach (var arg in new[] { Path.Combine(root, "tracking/track_people.py"), manifest, weights })
+             process.StartInfo.ArgumentList.Add(arg);
++        ChildProcess.ScrubSecrets(process.StartInfo);
+         process.StartInfo.Environment["OMP_NUM_THREADS"] = "2";
++        // OpenCV opens the same untrusted file with its own bundled ffmpeg. Give it the same limits as
++        // VideoTools.SafeInput: plain local files and real video containers, no playlists or URLs.
++        process.StartInfo.Environment["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "protocol_whitelist;file|format_whitelist;" + VideoTools.FormatWhitelist;
+         process.Start();
+         var error = process.StandardError.ReadToEndAsync();
+         var output = process.StandardOutput.ReadToEndAsync();
+diff --git a/Infrastructure/Services/Preflight.cs b/Infrastructure/Services/Preflight.cs
+index b05fb6c..be73f6e 100644
+--- a/Infrastructure/Services/Preflight.cs
++++ b/Infrastructure/Services/Preflight.cs
+@@ -229,6 +229,7 @@ public sealed class Preflight(QueueStore store, VideoTools videos, RtspIngestSer
+             }
+         };
+         foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
++        ChildProcess.ScrubSecrets(process.StartInfo);
+         process.Start();
+         var stdout = process.StandardOutput.ReadToEndAsync();
+         var stderr = process.StandardError.ReadToEndAsync();
+diff --git a/Infrastructure/Services/RtspIngestService.cs b/Infrastructure/Services/RtspIngestService.cs
+index 89af8c4..d7493fe 100644
+--- a/Infrastructure/Services/RtspIngestService.cs
++++ b/Infrastructure/Services/RtspIngestService.cs
+@@ -103,6 +103,7 @@ public sealed partial class RtspIngestService(QueueStore store, VideoTools video
+             }
+         };
+         foreach (var arg in Args(camera, dir)) process.StartInfo.ArgumentList.Add(arg);
++        ChildProcess.ScrubSecrets(process.StartInfo);
+         // Progress lines on stdout are how we know data is flowing. File times are not used for this:
+         // on Windows they can lag while another process still has the file open.
+         process.OutputDataReceived += (_, e) =>
+diff --git a/Infrastructure/Services/VideoTools.cs b/Infrastructure/Services/VideoTools.cs
+index f30bca3..4878577 100644
+--- a/Infrastructure/Services/VideoTools.cs
++++ b/Infrastructure/Services/VideoTools.cs
+@@ -12,10 +12,12 @@ public sealed class VideoTools(IWebHostEnvironment env)
+ 
+     // Uploaded and linked files are untrusted input. Without these, ffmpeg will follow playlists
+     // (HLS, concat) to other files or URLs. Allow only plain local files and real video containers.
++    internal const string FormatWhitelist = "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,mpegts,mpeg,mpegvideo,asf,ogg,flv,h264,hevc,m4v";
++
+     private static readonly string[] SafeInput =
+     [
+         "-protocol_whitelist", "file",
+-        "-format_whitelist", "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,mpegts,mpeg,mpegvideo,asf,ogg,flv,h264,hevc,m4v"
++        "-format_whitelist", FormatWhitelist
+     ];
+ 
+     private async Task<(int Code, string Error)> Run(string[] args, CancellationToken cancellationToken)
+@@ -32,6 +34,7 @@ public sealed class VideoTools(IWebHostEnvironment env)
+             }
+         };
+         foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
++        ChildProcess.ScrubSecrets(process.StartInfo);
+         try { process.Start(); }
+         catch (Exception) { throw new UserError("FFmpeg is unavailable. Set CCTV_FFMPEG to its executable path.", 503); }
+         var stderr = process.StandardError.ReadToEndAsync();
+diff --git a/Program.cs b/Program.cs
+index 5088dca..be582fb 100644
+--- a/Program.cs
++++ b/Program.cs
+@@ -85,6 +85,12 @@ if (trustProxy) app.UseForwardedHeaders();
+ var allowedHosts = HostGuard.Allowed(Environment.GetEnvironmentVariable("CCTV_URL"), Environment.GetEnvironmentVariable("CCTV_ALLOWED_HOSTS"));
+ app.Use(async (ctx, next) => {
+     ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
++    // Stops other sites from framing the UI (clickjacking) and limits what the pages may load.
++    ctx.Response.Headers["X-Frame-Options"] = "DENY";
++    ctx.Response.Headers["Referrer-Policy"] = "no-referrer";
++    ctx.Response.Headers.ContentSecurityPolicy =
++        "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; " +
++        "img-src 'self' data:; media-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+     if (!HostGuard.IsAllowed(ctx.Request.Host.Value, allowedHosts))
+     {
+         ctx.Response.StatusCode = 421; await ctx.Response.WriteAsJsonAsync(new { detail = "Unexpected Host header. Set CCTV_ALLOWED_HOSTS to the name you use to open the app." }); return;
+diff --git a/tests/CctvDemo.Tests/HardeningTests.cs b/tests/CctvDemo.Tests/HardeningTests.cs
+new file mode 100644
+index 0000000..acb79b5
+--- /dev/null
++++ b/tests/CctvDemo.Tests/HardeningTests.cs
+@@ -0,0 +1,34 @@
++using System.Diagnostics;
++using Xunit;
++
++public class HardeningTests
++{
++    [Fact]
++    public void Child_processes_do_not_inherit_CCTV_variables()
++    {
++        var info = new ProcessStartInfo("ffmpeg");
++        info.Environment["CCTV_UI_PASSWORD"] = "secret";
++        info.Environment["CCTV_RTSP_LOBBY"] = "rtsp://user:pw@host/x";
++        info.Environment["cctv_api_key"] = "key";          // names are matched case-insensitively
++        info.Environment["KEEP_ME"] = "1";
++
++        ChildProcess.ScrubSecrets(info);
++
++        Assert.DoesNotContain(info.Environment.Keys, k => k.StartsWith("CCTV_", StringComparison.OrdinalIgnoreCase));
++        Assert.Equal("1", info.Environment["KEEP_ME"]);
++    }
++
++    [Fact]
++    public void A_corrupt_state_file_does_not_stop_startup_and_is_kept_for_inspection()
++    {
++        using var app = new TestApp();
++        var data = Path.Combine(app.Dir, "data");
++        Directory.CreateDirectory(data);
++        File.WriteAllText(Path.Combine(data, "state.json"), "{ this is not json");
++
++        var store = new QueueStore(new FakeEnv(app.Dir));
++
++        Assert.Empty(store.Jobs());
++        Assert.Single(Directory.GetFiles(data, "state.corrupt-*.json"));
++    }
++}

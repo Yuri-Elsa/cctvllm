@@ -1,0 +1,382 @@
+diff --git a/EntityFramework/Repositories/QueueStore.cs b/EntityFramework/Repositories/QueueStore.cs
+index d6ecd82..4d26550 100644
+--- a/EntityFramework/Repositories/QueueStore.cs
++++ b/EntityFramework/Repositories/QueueStore.cs
+@@ -44,7 +44,14 @@ public sealed class QueueStore : IQueueRepository
+             JsonSerializer.Serialize(new StoredState(settings, items) { LinkedFolder = linkedFolder }, Json));
+         File.Move(Path.Combine(root, "state.tmp"), Path.Combine(root, "state.json"), true);
+     }
+-    public object Snapshot() { lock (gate) return new { jobs = items.ToArray(), running, settings, linkedFolder, frameLimit = VideoTools.MaxFrames }; }
++    // The UI polls this every second or so, so it gets the list without the bulky parts nobody reads there:
++    // the model's raw text and the per-sample person scores (hundreds per video). Export and the stored state keep them.
++    public object Snapshot() { lock (gate) return new { jobs = items.Select(Slim).ToArray(), running, settings, linkedFolder, frameLimit = VideoTools.MaxFrames }; }
++    private static VideoJob Slim(VideoJob j) => j with
++    {
++        RawText = null,
++        Screening = j.Screening is null ? null : j.Screening with { PersonSamples = [] }
++    };
+     public IReadOnlyList<VideoJob> Jobs() { lock (gate) return items.ToArray(); }
+     public string Root => root;
+     public ModelSettings Settings { get { lock (gate) return settings; } }
+diff --git a/Infrastructure/Helpers/NotificationOptions.cs b/Infrastructure/Helpers/NotificationOptions.cs
+index b0aa0a0..9b0673f 100644
+--- a/Infrastructure/Helpers/NotificationOptions.cs
++++ b/Infrastructure/Helpers/NotificationOptions.cs
+@@ -1,6 +1,8 @@
+ public sealed class NotificationOptions
+ {
+     public int MaxAttempts { get; set; } = 3;
++    // One send attempt (one channel) may take at most this long, so a hung SMTP or webhook server cannot hold up the rest.
++    public TimeSpan SendTimeout { get; set; } = TimeSpan.FromSeconds(30);
+     public TimeSpan BackoffBase { get; set; } = TimeSpan.FromSeconds(2);
+     public TimeSpan ThrottleWindow { get; set; } = TimeSpan.FromMinutes(5);   
+     public TimeSpan FlushInterval { get; set; } = TimeSpan.FromSeconds(10);  
+diff --git a/Infrastructure/Services/FlagNotifier.cs b/Infrastructure/Services/FlagNotifier.cs
+index dbc8a13..290e23b 100644
+--- a/Infrastructure/Services/FlagNotifier.cs
++++ b/Infrastructure/Services/FlagNotifier.cs
+@@ -32,6 +32,11 @@ public sealed class FlagNotifier(NotificationDispatcher dispatcher, INotificatio
+             }
+             Save(finished.Id, decision, passes, "");
+             if (AgentAction.IsSend(decision.Action)) dispatcher.Enqueue(finished, decision);
++            else if (decision.Action == AgentAction.Ignore && AgentPolicy.RouteIgnored(channels) is not null)
++            {
++                dispatcher.Enqueue(finished, decision);   // low priority, one quiet channel
++                logger.LogInformation("Agent judged {Job} not urgent; sent as a low-priority note: {Reason}", finished.Id, decision.Reason);
++            }
+             else logger.LogInformation("Agent chose not to notify for {Job}: {Reason}", finished.Id, decision.Reason);
+         }
+         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+diff --git a/Infrastructure/Services/FolderWatcherService.cs b/Infrastructure/Services/FolderWatcherService.cs
+index 54605a7..f7fdbc7 100644
+--- a/Infrastructure/Services/FolderWatcherService.cs
++++ b/Infrastructure/Services/FolderWatcherService.cs
+@@ -15,7 +15,7 @@ public sealed class FolderWatcherService(QueueStore store, IVideoIngest ingest,
+     // from coming back on the next poll, and a file that cannot be read from being retried
+     // (and logged) every few seconds. A changed file gets a new key, so it is tried again.
+     // Lost on restart.
+-    private readonly HashSet<string> handled = new();
++    private readonly Dictionary<string, string> handled = new();   // key -> file path, so entries of deleted files can be dropped
+ 
+     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+     {
+@@ -65,6 +65,7 @@ public sealed class FolderWatcherService(QueueStore store, IVideoIngest ingest,
+                 }
+             }
+             foreach (var path in seen.Keys.Where(p => !File.Exists(p)).ToList()) seen.Remove(path);
++            foreach (var key in handled.Where(kv => !File.Exists(kv.Value)).Select(kv => kv.Key).ToList()) handled.Remove(key);
+         }
+         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+         catch (Exception ex) { logger.LogWarning(ex, "Folder watch poll failed."); }
+@@ -105,7 +106,7 @@ public sealed class FolderWatcherService(QueueStore store, IVideoIngest ingest,
+         catch (IOException) { return false; }
+ 
+         var key = $"{path}|{info.Length}|{info.LastWriteTimeUtc.Ticks}";
+-        if (handled.Contains(key)) return false;
++        if (handled.ContainsKey(key)) return false;
+ 
+         var current = (info.Length, info.LastWriteTimeUtc);
+         var finishedSegment = info.Length > 0 && rtsp.OwnsFile(path);
+@@ -113,7 +114,7 @@ public sealed class FolderWatcherService(QueueStore store, IVideoIngest ingest,
+         seen[path] = current;
+         if (!unchanged || IsLocked(path)) return false;
+ 
+-        handled.Add(key);
++        handled[key] = path;
+         seen.Remove(path);
+         return true;
+     }
+diff --git a/Infrastructure/Services/NotificationAgent.cs b/Infrastructure/Services/NotificationAgent.cs
+index 8a8dfd2..fa071a1 100644
+--- a/Infrastructure/Services/NotificationAgent.cs
++++ b/Infrastructure/Services/NotificationAgent.cs
+@@ -78,6 +78,15 @@ public static class AgentPolicy
+         return null;
+     }
+ 
++    // An "ignore" decision does not silence the alert. The video is still flagged, so one low-priority channel
++    // gets a note that the agent judged it not urgent: email first, otherwise the webhook. WhatsApp is never
++    // used for this (it is the channel people look at right away). With neither channel there is nowhere
++    // quiet to put it, and the decision is only logged, as before.
++    public static IReadOnlyList<string>? RouteIgnored(IReadOnlyList<string> enabled) =>
++        enabled.Contains("email") ? new[] { "email" }
++        : enabled.Contains("webhook") ? new[] { "webhook" }
++        : null;
++
+     private static string Truncate(string text) => text.Length <= MaxSummaryChars ? text : text[..MaxSummaryChars] + "…";
+ }
+ 
+diff --git a/Infrastructure/Services/NotificationDispatcher.cs b/Infrastructure/Services/NotificationDispatcher.cs
+index 6d3a207..45ef973 100644
+--- a/Infrastructure/Services/NotificationDispatcher.cs
++++ b/Infrastructure/Services/NotificationDispatcher.cs
+@@ -43,10 +43,19 @@ public sealed class NotificationDispatcher : BackgroundService
+     {
+         var description = job.Description ?? "";
+         if (description.Length > options.MaxDescriptionChars) description = description[..options.MaxDescriptionChars] + "…";
++        var ignored = decision?.Action == AgentAction.Ignore;
++        var channels = ignored ? AgentPolicy.RouteIgnored(EnabledChannels()) ?? new[] { "log" } : AgentPolicy.Route(decision);
++        // An ignored flag is always low urgency, whatever the agent wrote, so it can neither skip the throttle
++        // nor carry a [HIGH] subject.
++        var urgency = ignored ? AgentUrgency.Low : decision?.Urgency;
++        var summary = ignored
++            ? "Diabaikan agen (prioritas rendah): " + (string.IsNullOrWhiteSpace(decision!.Reason) ? "tanpa alasan." : decision.Reason)
++            : decision?.Summary;
++        if (summary is { Length: > AgentPolicy.MaxSummaryChars }) summary = summary[..AgentPolicy.MaxSummaryChars] + "…";
+         queue.Writer.TryWrite(new NotificationPayload(job.Id, job.CameraName ?? "(kamera tidak diketahui)",
+             job.SegmentStart ?? job.Created, description, job.Suspicious == "yes", job.Weapon == "yes",
+             $"{options.ReviewBaseUrl.TrimEnd('/')}/#job={job.Id}", 0, AlertKind.Flag,
+-            decision?.Urgency, decision?.Summary, AgentPolicy.Route(decision)));
++            urgency, summary, channels));
+     }
+ 
+     // Backs the "Test notification" button. Bypasses throttle and does not touch any job.
+@@ -139,10 +148,14 @@ public sealed class NotificationDispatcher : BackgroundService
+             string? error = null; var sent = false;
+             for (var attempt = 1; attempt <= options.MaxAttempts && !sent; attempt++)
+             {
+-                try { await notifier.SendAsync(message, ct); sent = true; }
+-                catch (Exception ex) when (ex is not OperationCanceledException)
++                using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
++                limit.CancelAfter(options.SendTimeout);
++                try { await notifier.SendAsync(message, limit.Token); sent = true; }
++                // A timeout is also an OperationCanceledException. Only a real shutdown (ct) may escape from here:
++                // anything else used to end the dispatcher loop for good.
++                catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
+                 {
+-                    error = Describe(ex);
++                    error = ex is OperationCanceledException ? $"timed out after {options.SendTimeout.TotalSeconds:0}s" : Describe(ex);
+                     logger.LogWarning("Notification via {Channel} attempt {Attempt}/{Max} failed for {Job}: {Error}", notifier.Name, attempt, options.MaxAttempts, message.JobId, error);
+                     if (attempt < options.MaxAttempts) await Task.Delay(options.BackoffBase * Math.Pow(2, attempt - 1), ct);
+                 }
+diff --git a/Infrastructure/Services/VideoTools.cs b/Infrastructure/Services/VideoTools.cs
+index 4878577..ee8455d 100644
+--- a/Infrastructure/Services/VideoTools.cs
++++ b/Infrastructure/Services/VideoTools.cs
+@@ -6,8 +6,18 @@ public sealed class VideoTools(IWebHostEnvironment env)
+ {
+     public static readonly int MaxFrames = int.TryParse(Environment.GetEnvironmentVariable("CCTV_MAX_FRAMES"), out var frames) && frames >= 2 ? frames : 150;
+     public const long MaxBytes = 500L * 1024 * 1024;
+-    private readonly string ffmpeg = Environment.GetEnvironmentVariable("CCTV_FFMPEG") ??
+-        Path.GetFullPath(Path.Combine(env.ContentRootPath, "../../work/demo-deps/imageio_ffmpeg/binaries/ffmpeg-macos-aarch64-v7.1"));
++    // Total size of uploaded (not linked) videos. Retention never removes these, so they need a cap.
++    public static readonly long MaxUploadBytes = double.TryParse(Environment.GetEnvironmentVariable("CCTV_MAX_UPLOAD_GB"),
++        NumberStyles.Float, CultureInfo.InvariantCulture, out var uploadGb) && uploadGb > 0
++        ? (long)(uploadGb * 1024 * 1024 * 1024) : 20L * 1024 * 1024 * 1024;
++    private readonly string ffmpeg = Environment.GetEnvironmentVariable("CCTV_FFMPEG") is { Length: > 0 } configured ? configured : DevFfmpeg(env.ContentRootPath);
++
++    // The author's own build sits next to the project. Anywhere else, fall back to ffmpeg on the PATH.
++    private static string DevFfmpeg(string root)
++    {
++        var dev = Path.GetFullPath(Path.Combine(root, "../../work/demo-deps/imageio_ffmpeg/binaries/ffmpeg-macos-aarch64-v7.1"));
++        return File.Exists(dev) ? dev : "ffmpeg";
++    }
+     public string FfmpegPath => ffmpeg;
+ 
+     // Uploaded and linked files are untrusted input. Without these, ffmpeg will follow playlists
+@@ -87,7 +97,7 @@ public sealed class VideoTools(IWebHostEnvironment env)
+         // Matches the notebook's frame-index stride and full-duration even subsampling.
+         var stride = Math.Max(1, (int)Math.Round(fps * 2, MidpointRounding.ToEven));
+         var filter = $"select=not(mod(n\\,{stride})),scale=w='if(gte(iw,ih),min(640,iw),trunc(iw*min(1,640/ih)))':h='if(gte(iw,ih),trunc(ih*min(1,640/iw)),min(640,ih))':flags=area";
+-        var r = await Run(["-y", .. SafeInput, "-i", Path.Combine(folder, "video"), "-vf", filter, "-fps_mode", "vfr", Path.Combine(output, "%04d.png")], ct);
++        var r = await Run(["-y", .. SafeInput, "-i", Path.Combine(folder, "video"), "-vf", filter, "-fps_mode", "vfr", "-frames:v", Math.Max(600, MaxFrames * 4).ToString(CultureInfo.InvariantCulture), Path.Combine(output, "%04d.png")], ct);
+         var all = Directory.GetFiles(output, "*.png").Order().ToArray();
+         if (r.Code != 0 || all.Length == 0) throw new UserError("Could not extract video frames.", 422);
+         var indices = all.Length <= MaxFrames ? Enumerable.Range(0, all.Length).ToArray() :
+diff --git a/Program.cs b/Program.cs
+index be582fb..9025c86 100644
+--- a/Program.cs
++++ b/Program.cs
+@@ -10,7 +10,8 @@ using Microsoft.AspNetCore.HttpOverrides;
+ var builder = WebApplication.CreateBuilder(args);
+ var auth = new AuthOptions();
+ builder.WebHost.UseUrls(Environment.GetEnvironmentVariable("CCTV_URL") ?? "http://127.0.0.1:8766");
+-builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = VideoTools.MaxBytes);
++// Ordinary requests (settings, folder, review) are small JSON. Only the upload endpoint raises its own limit.
++builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 1024 * 1024);
+ // Behind a reverse proxy (HTTPS termination) set CCTV_TRUST_PROXY=1 so the real scheme, host and client
+ // address are used: the Secure cookie flag, the login throttle and the origin check all depend on them.
+ // Only enable it when the app is reachable through the proxy alone, otherwise clients could spoof the headers.
+@@ -18,7 +19,7 @@ var trustProxy = Environment.GetEnvironmentVariable("CCTV_TRUST_PROXY") is "1" o
+ if (trustProxy)
+     builder.Services.Configure<ForwardedHeadersOptions>(o => {
+         o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost;
+-        o.KnownNetworks.Clear(); o.KnownProxies.Clear();
++        o.KnownIPNetworks.Clear(); o.KnownProxies.Clear();
+     });
+ builder.Services.AddControllersWithViews().AddRazorOptions(options => {
+     options.ViewLocationFormats.Clear();
+@@ -122,15 +123,24 @@ string ResolveFolder(string raw)
+     if (value.StartsWith('~'))
+         value = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), value[1..].TrimStart('/'));
+     if (!Path.IsPathRooted(value)) throw new UserError("Enter the folder's full path, starting with / or ~.");
++    // A network path makes Windows contact that server (and offer the user's credentials) just to check it exists.
++    if (OperatingSystem.IsWindows() && (value.StartsWith(@"\\") || value.StartsWith("//")) &&
++        Environment.GetEnvironmentVariable("CCTV_ALLOW_UNC") != "1")
++        throw new UserError("Network paths (\\\\server\\share) are blocked. Set CCTV_ALLOW_UNC=1 if you need one.");
+     var full = Path.GetFullPath(value);
+     if (!Directory.Exists(full)) throw new UserError("There is no folder at that path.", 404);
+-    return full;
++    // Follow a link so that the "app's own data folder" check below sees where it really points.
++    return new DirectoryInfo(full).ResolveLinkTarget(true)?.FullName ?? full;
+ }
+ 
+ app.MapGet("/api/state", (QueueStore s) => s.Snapshot());
+ app.MapGet("/api/cameras", (RtspIngestService r) => r.Snapshot());
+ // preflight is the last startup check's overall result ("ok", "warn", "fail"), or null while the first one is still running.
+-app.MapGet("/api/health", (Preflight p) => new { ok = true, backend = "ASP.NET Core", version = Environment.Version.ToString(), preflight = p.Latest?.Overall });
++// Open to anyone so a monitor can poll it without logging in; only a signed-in user (or an app without a password) sees details.
++app.MapGet("/api/health", (Preflight p, HttpContext http) =>
++    !auth.Enabled || http.User.Identity?.IsAuthenticated == true
++        ? Results.Ok(new { ok = true, backend = "ASP.NET Core", version = Environment.Version.ToString(), preflight = p.Latest?.Overall })
++        : Results.Ok(new { ok = true })).AllowAnonymous();
+ // Full setup report. ?refresh=true runs the checks again (the "Run check" button in Settings).
+ app.MapGet("/api/preflight", (bool? refresh, Preflight p, CancellationToken ct) => p.GetAsync(refresh == true, ct));
+ app.MapGet("/api/models", async (string? endpoint, IHttpClientFactory clients, CancellationToken ct) => {
+@@ -173,6 +183,11 @@ app.MapPost("/api/settings", (ModelSettings value, QueueStore s) => {
+     return Results.Ok(new { ok = true });
+ });
+ app.MapPost("/api/videos", async (HttpRequest request, QueueStore s, VideoTools videos, CancellationToken ct) => {
++    if (request.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit) limit.MaxRequestBodySize = VideoTools.MaxBytes;
++    // Uploads are the only thing the retention service never cleans up, so give them a ceiling of their own.
++    var stored = s.Jobs().Where(j => j.SourcePath is null).Sum(j => j.Bytes);
++    if (stored >= VideoTools.MaxUploadBytes)
++        throw new UserError("Upload storage is full. Remove some videos first (limit: CCTV_MAX_UPLOAD_GB).", 507);
+     var name = Path.GetFileName(Uri.UnescapeDataString(request.Headers["X-Filename"].FirstOrDefault() ?? "video.mp4"));
+     if (name.Length > 200) name = name[..200];
+     var job = new VideoJob { Id = Guid.NewGuid().ToString("N"), Name = name };
+@@ -186,6 +201,7 @@ app.MapPost("/api/videos", async (HttpRequest request, QueueStore s, VideoTools
+             while ((n = await request.Body.ReadAsync(buffer, ct)) > 0)
+             {
+                 bytes += n; if (bytes > VideoTools.MaxBytes) throw new UserError("Maximum file size is 500 MB.", 413);
++                if (stored + bytes > VideoTools.MaxUploadBytes) throw new UserError("Upload storage is full. Remove some videos first (limit: CCTV_MAX_UPLOAD_GB).", 507);
+                 await file.WriteAsync(buffer.AsMemory(0, n), ct);
+             }
+         }
+diff --git a/Web/Views/Home/Index.cshtml b/Web/Views/Home/Index.cshtml
+index 99f8377..80411af 100644
+--- a/Web/Views/Home/Index.cshtml
++++ b/Web/Views/Home/Index.cshtml
+@@ -1,5 +1,5 @@
+ <!doctype html>
+-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CCTV Description Demo</title><link rel="icon" href="data:,"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-rbsA2VBKQhggwzxH7pPCaAqO46MgnOM80zW1RWuH61DGLwZJEdK2Kadq2F9CUG65" crossorigin="anonymous"><link rel="stylesheet" href="/style.css?v=3d8e72b1f5a6"></head><body><div class="app-shell"><nav class="sidebar" aria-label="Main navigation"><a class="brand" href="#overview"><span class="brand-icon">◈</span><span>CCTV <small>VIDEO REVIEW</small></span></a><div class="nav-caption">WORKSPACE</div><a class="nav-item active" href="#overview">▦ <span>Overview</span></a><a class="nav-item" href="#videoQueue">☷ <span>Video queue</span></a><button class="nav-item" id="navSettings">⚙ <span>Model settings</span></button>@await Html.PartialAsync("_AuthStatus")</nav><div class="workspace" id="overview">
++<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CCTV Description Demo</title><link rel="icon" href="data:,"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-rbsA2VBKQhggwzxH7pPCaAqO46MgnOM80zW1RWuH61DGLwZJEdK2Kadq2F9CUG65" crossorigin="anonymous"><link rel="stylesheet" href="/style.css?v=7c41a9d0e2b3"></head><body><div class="app-shell"><nav class="sidebar" aria-label="Main navigation"><a class="brand" href="#overview"><span class="brand-icon">◈</span><span>CCTV <small>VIDEO REVIEW</small></span></a><div class="nav-caption">WORKSPACE</div><a class="nav-item active" href="#overview">▦ <span>Overview</span></a><a class="nav-item" href="#videoQueue">☷ <span>Video queue</span></a><button class="nav-item" id="navSettings">⚙ <span>Model settings</span></button>@await Html.PartialAsync("_AuthStatus")</nav><div class="workspace" id="overview">
+ <header><div><div class="eyebrow">SECURITY MONITORING</div><h1>Overview</h1><p class="subtitle">Video review & descriptions</p></div><div><span id="modelStatus"></span><button id="settingsButton">Settings</button></div></header>
+ <div class="summary-strip"><div><span class="metric-label">Videos</span><strong id="totalStat">0</strong></div><div><span class="metric-label">Descriptions ready</span><strong id="readyStat">0</strong></div><button id="showFlagged" type="button" aria-pressed="false"><span class="metric-label">Flagged for review ↗</span><strong id="flaggedStat">0</strong></button><div><span class="metric-label">Queue status</span><strong id="runStat">Idle</strong></div></div><div class="toolbar"><label id="dropzone" tabindex="0" role="button" aria-label="Add videos"><input type="file" id="files" accept="video/mp4,video/quicktime,video/webm,video/x-m4v" multiple hidden>＋ Add videos</label><button id="addFolder" type="button">＋ Add folder</button><input type="file" id="folder" webkitdirectory multiple hidden><span class="limits">Max 5 minutes · 500 MB per video</span><span id="uploadStatus" role="status"></span><button id="start" class="primary" disabled>Generate descriptions</button></div>
+ <details id="uploadErrors" hidden><summary id="uploadErrorSummary"></summary><ul id="uploadErrorList"></ul></details>
+@@ -8,4 +8,4 @@
+ <main><aside id="videoQueue"><div class="heading"><h2>Videos <span id="count">0</span></h2><div class="queue-filters" role="group" aria-label="Filter videos"><button id="filterAll" type="button" aria-pressed="true">All videos</button><button id="filterFlagged" type="button" aria-pressed="false">Flagged</button><select id="cameraFilter" aria-label="Filter by camera" hidden><option value="all">All cameras</option></select></div></div><div id="queue"></div><div id="queueNote">One video at a time.</div><div class="export-row"><span>Export videos</span><button id="exportCsv" type="button">CSV</button><button id="exportJson" type="button">JSON</button></div></aside><section><div class="heading"><h2>Video review</h2><span id="status"></span></div><div id="detail"></div></section></main>
+ </div></div><dialog id="settings"><form id="settingsForm"><div class="modal-heading"><h2>Model settings</h2><button type="button" id="close" aria-label="Close settings">×</button></div><label>Run model on<select id="mode"><option value="local">Ollama</option><option value="notebook">Notebook GPU</option></select></label><label>Server URL<input id="endpoint" type="url" required></label><fieldset id="modelLabel"><legend>Model</legend><input type="hidden" id="model"><div id="modelChoices">Loading models…</div><button type="button" id="refreshModels">Refresh models</button></fieldset><label id="personLabelsLabel"><input type="checkbox" id="personLabels"> Person labels (YOLO)</label><fieldset class="screening-settings"><legend>Detection and thresholds</legend><label>Person detector<select id="personDetector"><option value="yolo">YOLO (default)</option><option value="llm">LLM (vision model, slower)</option></select></label><label>Person threshold<input type="number" id="personThreshold" min="0" max="1" step="0.01"></label><label>Suspicious threshold (p yes)<input type="number" id="suspiciousThreshold" min="0" max="1" step="0.01"></label><label class="toggle-label"><input type="checkbox" id="agentEnabled"> Notification agent (Ollama mode)</label><p id="thresholdNote"></p></fieldset><label class="toggle-label"><input type="checkbox" id="batchProcessing"> Batch processing (faster hardware)</label><fieldset class="screening-settings"><legend>Screening</legend><label>Flag activity<textarea id="flagActivity" maxlength="4000" rows="3" placeholder="Leave blank to use the default criteria"></textarea></label><label class="toggle-label"><input type="checkbox" id="siteContextEnabled"> Site / camera context</label><textarea id="siteContext" aria-label="Site / camera context" maxlength="4000" rows="3" placeholder="Area, camera view, permitted activities…" disabled></textarea><label class="toggle-label"><input type="checkbox" id="weaponEnabled"> Weapon flag</label><p>Applies to new runs.</p></fieldset><fieldset class="screening-settings"><legend>Notifications</legend><button type="button" id="testNotify">Test notification</button><p id="testNotifyResult" role="status"></p></fieldset><fieldset class="screening-settings"><legend>System check</legend><button type="button" id="runPreflight">Run check</button> <span id="preflightStamp" role="status"></span><ul id="preflightList" class="preflight-list"></ul></fieldset><p id="settingsNote"></p><div id="settingsError" role="alert"></div><button class="primary" type="submit">Save</button></form></dialog>
+ <dialog id="linkDialog"><form id="linkForm"><div class="modal-heading"><h2>Link a video folder</h2><button type="button" id="linkClose" aria-label="Close">×</button></div><label>Folder path<input id="linkPath" type="text" spellcheck="false" autocomplete="off" placeholder="~/Videos/cctv" required></label><p>Paste the full path to the folder your videos are in. The app reads that folder directly, so Refresh picks up newly added videos without re-selecting anything. Videos stay where they are — nothing is copied.</p><div id="linkError" role="alert"></div><button class="primary" type="submit">Link folder</button></form></dialog>
+-<div id="toast" role="status" aria-live="polite"></div><script src="/app.js?v=3d8e72b1f5a6"></script><script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-kenU1KFdBIe4zVF0s0G1M5b4hcpxyD9F7jL+jjXkk+Q2h455rYXK/7HAuoJl+0I4" crossorigin="anonymous"></script></body></html>
+\ No newline at end of file
++<div id="toast" role="status" aria-live="polite"></div><script src="/app.js?v=7c41a9d0e2b3"></script><script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-kenU1KFdBIe4zVF0s0G1M5b4hcpxyD9F7jL+jjXkk+Q2h455rYXK/7HAuoJl+0I4" crossorigin="anonymous"></script></body></html>
+\ No newline at end of file
+diff --git a/tests/CctvDemo.Tests/NotificationAgentTests.cs b/tests/CctvDemo.Tests/NotificationAgentTests.cs
+index 3b35c3c..3cf4fe0 100644
+--- a/tests/CctvDemo.Tests/NotificationAgentTests.cs
++++ b/tests/CctvDemo.Tests/NotificationAgentTests.cs
+@@ -155,11 +155,19 @@ public class AgentPolicyTests
+         Assert.Equal(new[] { "email", "webhook", "log" }, AgentPolicy.Route(new AgentDecision("send_email", "low", "s", "r")));
+     }
+ 
++    [Fact]
++    public void An_ignored_flag_prefers_email_then_webhook_and_never_whatsapp()
++    {
++        Assert.Equal(new[] { "email" }, AgentPolicy.RouteIgnored(new[] { "whatsapp", "email", "webhook", "log" }));
++        Assert.Equal(new[] { "webhook" }, AgentPolicy.RouteIgnored(new[] { "whatsapp", "webhook", "log" }));
++        Assert.Null(AgentPolicy.RouteIgnored(new[] { "whatsapp", "log" }));
++    }
++
+     [Fact]
+     public void Routing_is_open_for_non_send_decisions_and_for_guard_overrides()
+     {
+         Assert.Null(AgentPolicy.Route(null));
+-        Assert.Null(AgentPolicy.Route(new AgentDecision("ignore", "low", "", "")));
++        Assert.Null(AgentPolicy.Route(new AgentDecision("ignore", "low", "", "")));   // ignore is routed by RouteIgnored instead
+         // A guard override reaches every channel, so a weapon alert is never narrowed to one.
+         Assert.Null(AgentPolicy.Route(new AgentDecision("send_whatsapp", "critical", "s", "r", GuardOverride: true)));
+     }
+@@ -313,19 +321,34 @@ public class FlagNotifierTests
+     }
+ 
+     [Fact]
+-    public async Task An_ignore_decision_sends_nothing_but_is_logged()
++    public async Task An_ignore_decision_still_goes_out_as_a_low_priority_email_and_never_to_whatsapp()
+     {
+-        await using var h = new Harness(new FakeAgent(Says("ignore", "low")));
++        await using var h = new Harness(new FakeAgent(Says("ignore", "critical")));   // urgency is forced to low
+         var job = h.Add();
+         await Notify(h, job);
+-        await Task.Delay(150);
+-        Assert.Equal(0, h.Sent);
+-        Assert.Equal(0, h.Log.Sent.Count);
++        await Wait.Until(() => h.Email.Sent.Count == 1);
++        await Task.Delay(100);
++        Assert.Empty(h.WhatsApp.Sent);
++        var payload = h.Email.Sent.Single();
++        Assert.Equal("low", payload.Urgency);
++        Assert.Contains("karena begitu", payload.Summary);
+         var agent = h.App.Store.Get(job.Id).Screening!.Agent!;
+         Assert.Equal("ignore", agent.Action);
+         Assert.Equal("karena begitu", agent.Reason);
+     }
+ 
++    [Fact]
++    public async Task An_ignore_decision_with_only_whatsapp_has_no_quiet_channel_and_is_only_logged()
++    {
++        await using var h = new Harness(new FakeAgent(Says("ignore", "low")), email: false);
++        var job = h.Add();
++        await Notify(h, job);
++        await Task.Delay(150);
++        Assert.Equal(0, h.Sent);
++        Assert.Empty(h.WhatsApp.Sent);
++        Assert.Equal("ignore", h.App.Store.Get(job.Id).Screening!.Agent!.Action);
++    }
++
+     [Fact]
+     public async Task A_weapon_the_agent_tries_to_ignore_is_sent_as_critical_to_every_channel()
+     {
+diff --git a/tests/CctvDemo.Tests/NotificationDispatcherTests.cs b/tests/CctvDemo.Tests/NotificationDispatcherTests.cs
+index 2dd0927..47da7f5 100644
+--- a/tests/CctvDemo.Tests/NotificationDispatcherTests.cs
++++ b/tests/CctvDemo.Tests/NotificationDispatcherTests.cs
+@@ -197,4 +197,25 @@ public class NotificationDispatcherTests
+         var equal = new List<NotificationPayload> { P("a", false), P("b", false) };
+         Assert.Equal("b", NotificationDispatcher.MostSevere(equal).JobId);   // ties: newest
+     }
++
++    private sealed class HangingNotifier : INotifier
++    {
++        public string Name => "hang";
++        public bool Enabled => true;
++        public Task SendAsync(NotificationPayload payload, CancellationToken ct) => Task.Delay(Timeout.Infinite, ct);
++    }
++
++    [Fact]
++    public async Task A_notifier_that_hangs_times_out_and_does_not_stop_the_dispatcher()
++    {
++        var options = Opts();
++        options.SendTimeout = TimeSpan.FromMilliseconds(50);
++        await using var h = new Harness(options, null, new HangingNotifier());
++        await h.StartAsync();
++
++        h.Dispatcher.Enqueue(Flagged("lobby"));
++        await Wait.Until(() => h.Notifier.Sent.Count == 1);          // the healthy channel still delivers
++        h.Dispatcher.Enqueue(Flagged("garage"));
++        await Wait.Until(() => h.Notifier.Sent.Count == 2);          // and the loop is still alive afterwards
++    }
+ }
+diff --git a/wwwroot/app.js b/wwwroot/app.js
+index 372febe..f52a32a 100644
+--- a/wwwroot/app.js
++++ b/wwwroot/app.js
+@@ -17,7 +17,7 @@ const segmentTime = iso => iso ? new Date(iso).toLocaleString([], { day: '2-digi
+ const ago = iso => { if (!iso) return 'No data yet'; const s = Math.max(0, Math.round((Date.now() - new Date(iso)) / 1000)); return s < 5 ? 'just now' : s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : `${Math.floor(s / 86400)}d ago` };
+ const REVIEW = { confirmed: 'Confirmed', false_alarm: 'False alarm' };
+ function notifyInfo(j) {
+-    if (j.notifiedAt) return { cls: j.notifyError ? 'warn' : 'ok', text: `Sent ${segmentTime(j.notifiedAt)}` + (j.notifyError ? ` · some channels failed: ${j.notifyError}` : '') };
++    if (j.notifiedAt) return { cls: j.notifyError ? 'warn' : 'ok', text: `Sent${j.screening && j.screening.agent && j.screening.agent.action === 'ignore' ? ' (low priority: agent judged it not urgent)' : ''} ${segmentTime(j.notifiedAt)}` + (j.notifyError ? ` · some channels failed: ${j.notifyError}` : '') };
+     if (j.notifyError) return { cls: 'fail', text: `Not delivered: ${j.notifyError}` };
+     const agent = j.screening && j.screening.agent;
+     if (agent && agent.action === 'ignore') return { cls: 'ok', text: `Agent chose not to notify${agent.reason ? ': ' + agent.reason : ''}` };

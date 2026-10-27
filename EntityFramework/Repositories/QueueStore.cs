@@ -16,12 +16,26 @@ public sealed class QueueStore : IQueueRepository
     {
         root = Environment.GetEnvironmentVariable("CCTV_DATA_DIR") ?? Path.Combine(env.ContentRootPath, "data");
         Directory.CreateDirectory(root);
-        if (File.Exists(Path.Combine(root, "state.json")))
+        var statePath = Path.Combine(root, "state.json");
+        if (File.Exists(statePath))
         {
-            var saved = JsonSerializer.Deserialize<StoredState>(File.ReadAllText(Path.Combine(root, "state.json")), Json)!;
-            settings = saved.Settings;
-            linkedFolder = saved.LinkedFolder;
-            items = saved.Jobs.Select(j => j.Status == "processing" ? j with { Status = "queued", Stage = "Queued after restart" } : j).ToList();
+            try
+            {
+                var saved = JsonSerializer.Deserialize<StoredState>(File.ReadAllText(statePath), Json)
+                    ?? throw new JsonException("state.json is empty.");
+                settings = saved.Settings ?? new ModelSettings();
+                linkedFolder = saved.LinkedFolder;
+                items = (saved.Jobs ?? []).Select(j => j.Status == "processing" ? j with { Status = "queued", Stage = "Queued after restart" } : j).ToList();
+            }
+            catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+            {
+                // A damaged state file must not stop the app (and with it the cameras) from starting.
+                // Keep the damaged copy for inspection and start with an empty queue.
+                var backup = Path.Combine(root, $"state.corrupt-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+                try { File.Copy(statePath, backup, true); } catch (IOException) { }
+                Console.Error.WriteLine($"state.json could not be read ({ex.Message}). A copy was kept as {backup}; starting with an empty queue.");
+                settings = new ModelSettings(); linkedFolder = null; items = [];
+            }
         }
     }
     private void Persist()
@@ -30,7 +44,14 @@ public sealed class QueueStore : IQueueRepository
             JsonSerializer.Serialize(new StoredState(settings, items) { LinkedFolder = linkedFolder }, Json));
         File.Move(Path.Combine(root, "state.tmp"), Path.Combine(root, "state.json"), true);
     }
-    public object Snapshot() { lock (gate) return new { jobs = items.ToArray(), running, settings, linkedFolder, frameLimit = VideoTools.MaxFrames }; }
+    // The UI polls this every second or so, so it gets the list without the bulky parts nobody reads there:
+    // the model's raw text and the per-sample person scores (hundreds per video). Export and the stored state keep them.
+    public object Snapshot() { lock (gate) return new { jobs = items.Select(Slim).ToArray(), running, settings, linkedFolder, frameLimit = VideoTools.MaxFrames }; }
+    private static VideoJob Slim(VideoJob j) => j with
+    {
+        RawText = null,
+        Screening = j.Screening is null ? null : j.Screening with { PersonSamples = [] }
+    };
     public IReadOnlyList<VideoJob> Jobs() { lock (gate) return items.ToArray(); }
     public string Root => root;
     public ModelSettings Settings { get { lock (gate) return settings; } }

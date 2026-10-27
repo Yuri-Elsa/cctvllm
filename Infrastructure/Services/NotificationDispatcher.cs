@@ -43,10 +43,19 @@ public sealed class NotificationDispatcher : BackgroundService
     {
         var description = job.Description ?? "";
         if (description.Length > options.MaxDescriptionChars) description = description[..options.MaxDescriptionChars] + "…";
+        var ignored = decision?.Action == AgentAction.Ignore;
+        var channels = ignored ? AgentPolicy.RouteIgnored(EnabledChannels()) ?? new[] { "log" } : AgentPolicy.Route(decision);
+        // An ignored flag is always low urgency, whatever the agent wrote, so it can neither skip the throttle
+        // nor carry a [HIGH] subject.
+        var urgency = ignored ? AgentUrgency.Low : decision?.Urgency;
+        var summary = ignored
+            ? "Diabaikan agen (prioritas rendah): " + (string.IsNullOrWhiteSpace(decision!.Reason) ? "tanpa alasan." : decision.Reason)
+            : decision?.Summary;
+        if (summary is { Length: > AgentPolicy.MaxSummaryChars }) summary = summary[..AgentPolicy.MaxSummaryChars] + "…";
         queue.Writer.TryWrite(new NotificationPayload(job.Id, job.CameraName ?? "(kamera tidak diketahui)",
             job.SegmentStart ?? job.Created, description, job.Suspicious == "yes", job.Weapon == "yes",
             $"{options.ReviewBaseUrl.TrimEnd('/')}/#job={job.Id}", 0, AlertKind.Flag,
-            decision?.Urgency, decision?.Summary, AgentPolicy.Route(decision)));
+            urgency, summary, channels));
     }
 
     // Backs the "Test notification" button. Bypasses throttle and does not touch any job.
@@ -73,8 +82,9 @@ public sealed class NotificationDispatcher : BackgroundService
             {
                 try
                 {
-                    // A critical alert is never held back by the per-camera throttle.
-                    if (payload.Kind is AlertKind.CameraOffline or AlertKind.CameraRecovered || payload.Urgency == AgentUrgency.Critical)
+                    // A critical alert is never held back by the per-camera throttle. A weapon flag counts as
+                    // critical even when no agent set an urgency (agent off, notebook mode, no WhatsApp/email).
+                    if (payload.Kind is AlertKind.CameraOffline or AlertKind.CameraRecovered || IsCritical(payload))
                     {
                         await Deliver(payload, [payload], stoppingToken);
                         continue;
@@ -120,7 +130,7 @@ public sealed class NotificationDispatcher : BackgroundService
                 }
                 foreach (var group in due)
                 {
-                    try { await Deliver(group[^1] with { MergedCount = group.Count - 1 }, group, ct); }
+                    try { await Deliver(MostSevere(group) with { MergedCount = group.Count - 1 }, group, ct); }
                     catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogError(ex, "Digest dispatch failed"); }
                 }
             }
@@ -138,10 +148,14 @@ public sealed class NotificationDispatcher : BackgroundService
             string? error = null; var sent = false;
             for (var attempt = 1; attempt <= options.MaxAttempts && !sent; attempt++)
             {
-                try { await notifier.SendAsync(message, ct); sent = true; }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                limit.CancelAfter(options.SendTimeout);
+                try { await notifier.SendAsync(message, limit.Token); sent = true; }
+                // A timeout is also an OperationCanceledException. Only a real shutdown (ct) may escape from here:
+                // anything else used to end the dispatcher loop for good.
+                catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
                 {
-                    error = Describe(ex);
+                    error = ex is OperationCanceledException ? $"timed out after {options.SendTimeout.TotalSeconds:0}s" : Describe(ex);
                     logger.LogWarning("Notification via {Channel} attempt {Attempt}/{Max} failed for {Job}: {Error}", notifier.Name, attempt, options.MaxAttempts, message.JobId, error);
                     if (attempt < options.MaxAttempts) await Task.Delay(options.BackoffBase * Math.Pow(2, attempt - 1), ct);
                 }
@@ -154,6 +168,24 @@ public sealed class NotificationDispatcher : BackgroundService
         foreach (var item in covered.Where(i => !string.IsNullOrEmpty(i.JobId)))
             await sink.RecordAsync(item.JobId, ok ? DateTimeOffset.UtcNow : null, summary, ct);
     }
+
+    private static bool IsCritical(NotificationPayload p) =>
+        p.Urgency == AgentUrgency.Critical || (p.IsModelFlag && p.Weapon);
+
+    private static int Rank(string? urgency) => urgency switch
+    {
+        AgentUrgency.Critical => 3, AgentUrgency.High => 2, AgentUrgency.Medium => 1, _ => 0
+    };
+
+    // The digest speaks for every held alert, so it carries the most serious one (weapon, then urgency,
+    // then suspicious). Among equals the newest wins, as before.
+    internal static NotificationPayload MostSevere(IReadOnlyList<NotificationPayload> group) =>
+        group.Select((payload, index) => (payload, index))
+            .OrderByDescending(x => x.payload.Weapon)
+            .ThenByDescending(x => Rank(x.payload.Urgency))
+            .ThenByDescending(x => x.payload.Suspicious)
+            .ThenByDescending(x => x.index)
+            .First().payload;
 
     private static string Describe(Exception ex) => ex switch
     {

@@ -32,6 +32,11 @@ public sealed class FlagNotifier(NotificationDispatcher dispatcher, INotificatio
             }
             Save(finished.Id, decision, passes, "");
             if (AgentAction.IsSend(decision.Action)) dispatcher.Enqueue(finished, decision);
+            else if (decision.Action == AgentAction.Ignore && AgentPolicy.RouteIgnored(channels) is not null)
+            {
+                dispatcher.Enqueue(finished, decision);   // low priority, one quiet channel
+                logger.LogInformation("Agent judged {Job} not urgent; sent as a low-priority note: {Reason}", finished.Id, decision.Reason);
+            }
             else logger.LogInformation("Agent chose not to notify for {Job}: {Reason}", finished.Id, decision.Reason);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }

@@ -103,6 +103,7 @@ public sealed partial class RtspIngestService(QueueStore store, VideoTools video
             }
         };
         foreach (var arg in Args(camera, dir)) process.StartInfo.ArgumentList.Add(arg);
+        ChildProcess.ScrubSecrets(process.StartInfo);
         // Progress lines on stdout are how we know data is flowing. File times are not used for this:
         // on Windows they can lag while another process still has the file open.
         process.OutputDataReceived += (_, e) =>

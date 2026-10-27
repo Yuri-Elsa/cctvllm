@@ -1,0 +1,114 @@
+diff --git a/Infrastructure/Services/DescriptionWorker.cs b/Infrastructure/Services/DescriptionWorker.cs
+index fe7afae..caaeff5 100644
+--- a/Infrastructure/Services/DescriptionWorker.cs
++++ b/Infrastructure/Services/DescriptionWorker.cs
+@@ -57,14 +57,19 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
+                 }
+                 await flags.NotifyAsync(finished, config, (id, ct) => ReanalyzeWithMoreFrames(id, config, ct), stoppingToken);
+             }
+-            catch (OperationCanceledException)
++            // Only a real cancel (the user pressed Cancel, or the app is shutting down) lands here. A timeout
++            // from HttpClient or ffmpeg is also an OperationCanceledException, but nobody asked for it, so it
++            // falls through to the failure handler below and raises a failure alert.
++            catch (OperationCanceledException) when (current?.IsCancellationRequested == true)
+             {
+                 store.Update(job.Id, j => j with { Status = stoppingToken.IsCancellationRequested ? "queued" : "cancelled", Stage = "Stopped" });
+             }
+             catch (Exception ex)
+             {
+                 logger.LogWarning(ex, "Description failed for {Video}", job.Name);
+-                var message = ex is HttpRequestException ? "Cannot reach the model server. Check the connection in Settings." : ex.Message;
++                var message = ex is HttpRequestException ? "Cannot reach the model server. Check the connection in Settings."
++                    : ex is OperationCanceledException ? "Timed out while analysing this video (model server or ffmpeg took too long). Retry it."
++                    : ex.Message;
+                 store.Update(job.Id, j => j with { Status = "failed", Stage = "Failed", Error = message.Length > 500 ? message[..500] : message });
+                 // Alert only for automated ingestion (watched folder / RTSP). A failed manual upload is
+                 // already visible to the person who just added it.
+diff --git a/Infrastructure/Services/NotificationDispatcher.cs b/Infrastructure/Services/NotificationDispatcher.cs
+index 579648f..6d3a207 100644
+--- a/Infrastructure/Services/NotificationDispatcher.cs
++++ b/Infrastructure/Services/NotificationDispatcher.cs
+@@ -73,8 +73,9 @@ public sealed class NotificationDispatcher : BackgroundService
+             {
+                 try
+                 {
+-                    // A critical alert is never held back by the per-camera throttle.
+-                    if (payload.Kind is AlertKind.CameraOffline or AlertKind.CameraRecovered || payload.Urgency == AgentUrgency.Critical)
++                    // A critical alert is never held back by the per-camera throttle. A weapon flag counts as
++                    // critical even when no agent set an urgency (agent off, notebook mode, no WhatsApp/email).
++                    if (payload.Kind is AlertKind.CameraOffline or AlertKind.CameraRecovered || IsCritical(payload))
+                     {
+                         await Deliver(payload, [payload], stoppingToken);
+                         continue;
+@@ -120,7 +121,7 @@ public sealed class NotificationDispatcher : BackgroundService
+                 }
+                 foreach (var group in due)
+                 {
+-                    try { await Deliver(group[^1] with { MergedCount = group.Count - 1 }, group, ct); }
++                    try { await Deliver(MostSevere(group) with { MergedCount = group.Count - 1 }, group, ct); }
+                     catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogError(ex, "Digest dispatch failed"); }
+                 }
+             }
+@@ -155,6 +156,24 @@ public sealed class NotificationDispatcher : BackgroundService
+             await sink.RecordAsync(item.JobId, ok ? DateTimeOffset.UtcNow : null, summary, ct);
+     }
+ 
++    private static bool IsCritical(NotificationPayload p) =>
++        p.Urgency == AgentUrgency.Critical || (p.IsModelFlag && p.Weapon);
++
++    private static int Rank(string? urgency) => urgency switch
++    {
++        AgentUrgency.Critical => 3, AgentUrgency.High => 2, AgentUrgency.Medium => 1, _ => 0
++    };
++
++    // The digest speaks for every held alert, so it carries the most serious one (weapon, then urgency,
++    // then suspicious). Among equals the newest wins, as before.
++    internal static NotificationPayload MostSevere(IReadOnlyList<NotificationPayload> group) =>
++        group.Select((payload, index) => (payload, index))
++            .OrderByDescending(x => x.payload.Weapon)
++            .ThenByDescending(x => Rank(x.payload.Urgency))
++            .ThenByDescending(x => x.payload.Suspicious)
++            .ThenByDescending(x => x.index)
++            .First().payload;
++
+     private static string Describe(Exception ex) => ex switch
+     {
+         NotifierException => ex.Message,
+diff --git a/tests/CctvDemo.Tests/NotificationDispatcherTests.cs b/tests/CctvDemo.Tests/NotificationDispatcherTests.cs
+index 455546d..2dd0927 100644
+--- a/tests/CctvDemo.Tests/NotificationDispatcherTests.cs
++++ b/tests/CctvDemo.Tests/NotificationDispatcherTests.cs
+@@ -170,4 +170,31 @@ public class NotificationDispatcherTests
+         Assert.Equal("not configured", results["off"]);
+         Assert.Equal(0, off.Attempts);
+     }
+-}
+\ No newline at end of file
++
++    [Fact]
++    public async Task Weapon_flag_is_sent_at_once_even_inside_the_throttle_window()
++    {
++        await using var h = new Harness(Opts());
++        await h.StartAsync();
++        h.Dispatcher.Enqueue(Flagged("lobby"));
++        await Wait.Until(() => h.Notifier.Sent.Count == 1);
++
++        var weapon = Flagged("lobby") with { Weapon = "yes" };
++        h.Dispatcher.Enqueue(weapon);
++        await Wait.Until(() => h.Notifier.Sent.Count == 2);
++        Assert.Equal(weapon.Id, h.Notifier.Sent.Last().JobId);
++    }
++
++    [Fact]
++    public void Digest_carries_the_most_severe_alert_not_just_the_newest()
++    {
++        NotificationPayload P(string id, bool weapon, string? urgency = null) =>
++            new(id, "lobby", DateTimeOffset.UtcNow, "x", true, weapon, "http://x", 0, AlertKind.Flag, urgency);
++
++        var group = new List<NotificationPayload> { P("a", false), P("weapon", true), P("c", false, AgentUrgency.High) };
++        Assert.Equal("weapon", NotificationDispatcher.MostSevere(group).JobId);
++
++        var equal = new List<NotificationPayload> { P("a", false), P("b", false) };
++        Assert.Equal("b", NotificationDispatcher.MostSevere(equal).JobId);   // ties: newest
++    }
++}

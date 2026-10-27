@@ -1,6 +1,8 @@
 public sealed class NotificationOptions
 {
     public int MaxAttempts { get; set; } = 3;
+    // One send attempt (one channel) may take at most this long, so a hung SMTP or webhook server cannot hold up the rest.
+    public TimeSpan SendTimeout { get; set; } = TimeSpan.FromSeconds(30);
     public TimeSpan BackoffBase { get; set; } = TimeSpan.FromSeconds(2);
     public TimeSpan ThrottleWindow { get; set; } = TimeSpan.FromMinutes(5);   
     public TimeSpan FlushInterval { get; set; } = TimeSpan.FromSeconds(10);  

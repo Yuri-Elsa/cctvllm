@@ -45,7 +45,11 @@ public sealed class PersonTracking
         };
         foreach (var arg in new[] { Path.Combine(root, "tracking/track_people.py"), manifest, weights })
             process.StartInfo.ArgumentList.Add(arg);
+        ChildProcess.ScrubSecrets(process.StartInfo);
         process.StartInfo.Environment["OMP_NUM_THREADS"] = "2";
+        // OpenCV opens the same untrusted file with its own bundled ffmpeg. Give it the same limits as
+        // VideoTools.SafeInput: plain local files and real video containers, no playlists or URLs.
+        process.StartInfo.Environment["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "protocol_whitelist;file|format_whitelist;" + VideoTools.FormatWhitelist;
         process.Start();
         var error = process.StandardError.ReadToEndAsync();
         var output = process.StandardOutput.ReadToEndAsync();

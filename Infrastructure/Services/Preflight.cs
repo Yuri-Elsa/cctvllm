@@ -229,6 +229,7 @@ public sealed class Preflight(QueueStore store, VideoTools videos, RtspIngestSer
             }
         };
         foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
+        ChildProcess.ScrubSecrets(process.StartInfo);
         process.Start();
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();

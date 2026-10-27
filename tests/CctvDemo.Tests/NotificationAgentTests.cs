@@ -156,10 +156,18 @@ public class AgentPolicyTests
     }
 
     [Fact]
+    public void An_ignored_flag_prefers_email_then_webhook_and_never_whatsapp()
+    {
+        Assert.Equal(new[] { "email" }, AgentPolicy.RouteIgnored(new[] { "whatsapp", "email", "webhook", "log" }));
+        Assert.Equal(new[] { "webhook" }, AgentPolicy.RouteIgnored(new[] { "whatsapp", "webhook", "log" }));
+        Assert.Null(AgentPolicy.RouteIgnored(new[] { "whatsapp", "log" }));
+    }
+
+    [Fact]
     public void Routing_is_open_for_non_send_decisions_and_for_guard_overrides()
     {
         Assert.Null(AgentPolicy.Route(null));
-        Assert.Null(AgentPolicy.Route(new AgentDecision("ignore", "low", "", "")));
+        Assert.Null(AgentPolicy.Route(new AgentDecision("ignore", "low", "", "")));   // ignore is routed by RouteIgnored instead
         // A guard override reaches every channel, so a weapon alert is never narrowed to one.
         Assert.Null(AgentPolicy.Route(new AgentDecision("send_whatsapp", "critical", "s", "r", GuardOverride: true)));
     }
@@ -313,17 +321,32 @@ public class FlagNotifierTests
     }
 
     [Fact]
-    public async Task An_ignore_decision_sends_nothing_but_is_logged()
+    public async Task An_ignore_decision_still_goes_out_as_a_low_priority_email_and_never_to_whatsapp()
     {
-        await using var h = new Harness(new FakeAgent(Says("ignore", "low")));
+        await using var h = new Harness(new FakeAgent(Says("ignore", "critical")));   // urgency is forced to low
+        var job = h.Add();
+        await Notify(h, job);
+        await Wait.Until(() => h.Email.Sent.Count == 1);
+        await Task.Delay(100);
+        Assert.Empty(h.WhatsApp.Sent);
+        var payload = h.Email.Sent.Single();
+        Assert.Equal("low", payload.Urgency);
+        Assert.Contains("karena begitu", payload.Summary);
+        var agent = h.App.Store.Get(job.Id).Screening!.Agent!;
+        Assert.Equal("ignore", agent.Action);
+        Assert.Equal("karena begitu", agent.Reason);
+    }
+
+    [Fact]
+    public async Task An_ignore_decision_with_only_whatsapp_has_no_quiet_channel_and_is_only_logged()
+    {
+        await using var h = new Harness(new FakeAgent(Says("ignore", "low")), email: false);
         var job = h.Add();
         await Notify(h, job);
         await Task.Delay(150);
         Assert.Equal(0, h.Sent);
-        Assert.Equal(0, h.Log.Sent.Count);
-        var agent = h.App.Store.Get(job.Id).Screening!.Agent!;
-        Assert.Equal("ignore", agent.Action);
-        Assert.Equal("karena begitu", agent.Reason);
+        Assert.Empty(h.WhatsApp.Sent);
+        Assert.Equal("ignore", h.App.Store.Get(job.Id).Screening!.Agent!.Action);
     }
 
     [Fact]

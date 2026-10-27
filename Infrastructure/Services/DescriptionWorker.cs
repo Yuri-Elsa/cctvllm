@@ -57,14 +57,19 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
                 }
                 await flags.NotifyAsync(finished, config, (id, ct) => ReanalyzeWithMoreFrames(id, config, ct), stoppingToken);
             }
-            catch (OperationCanceledException)
+            // Only a real cancel (the user pressed Cancel, or the app is shutting down) lands here. A timeout
+            // from HttpClient or ffmpeg is also an OperationCanceledException, but nobody asked for it, so it
+            // falls through to the failure handler below and raises a failure alert.
+            catch (OperationCanceledException) when (current?.IsCancellationRequested == true)
             {
                 store.Update(job.Id, j => j with { Status = stoppingToken.IsCancellationRequested ? "queued" : "cancelled", Stage = "Stopped" });
             }
             catch (Exception ex)
             {
                 logger.LogWarning(ex, "Description failed for {Video}", job.Name);
-                var message = ex is HttpRequestException ? "Cannot reach the model server. Check the connection in Settings." : ex.Message;
+                var message = ex is HttpRequestException ? "Cannot reach the model server. Check the connection in Settings."
+                    : ex is OperationCanceledException ? "Timed out while analysing this video (model server or ffmpeg took too long). Retry it."
+                    : ex.Message;
                 store.Update(job.Id, j => j with { Status = "failed", Stage = "Failed", Error = message.Length > 500 ? message[..500] : message });
                 // Alert only for automated ingestion (watched folder / RTSP). A failed manual upload is
                 // already visible to the person who just added it.

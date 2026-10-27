@@ -6,16 +6,28 @@ public sealed class VideoTools(IWebHostEnvironment env)
 {
     public static readonly int MaxFrames = int.TryParse(Environment.GetEnvironmentVariable("CCTV_MAX_FRAMES"), out var frames) && frames >= 2 ? frames : 150;
     public const long MaxBytes = 500L * 1024 * 1024;
-    private readonly string ffmpeg = Environment.GetEnvironmentVariable("CCTV_FFMPEG") ??
-        Path.GetFullPath(Path.Combine(env.ContentRootPath, "../../work/demo-deps/imageio_ffmpeg/binaries/ffmpeg-macos-aarch64-v7.1"));
+    // Total size of uploaded (not linked) videos. Retention never removes these, so they need a cap.
+    public static readonly long MaxUploadBytes = double.TryParse(Environment.GetEnvironmentVariable("CCTV_MAX_UPLOAD_GB"),
+        NumberStyles.Float, CultureInfo.InvariantCulture, out var uploadGb) && uploadGb > 0
+        ? (long)(uploadGb * 1024 * 1024 * 1024) : 20L * 1024 * 1024 * 1024;
+    private readonly string ffmpeg = Environment.GetEnvironmentVariable("CCTV_FFMPEG") is { Length: > 0 } configured ? configured : DevFfmpeg(env.ContentRootPath);
+
+    // The author's own build sits next to the project. Anywhere else, fall back to ffmpeg on the PATH.
+    private static string DevFfmpeg(string root)
+    {
+        var dev = Path.GetFullPath(Path.Combine(root, "../../work/demo-deps/imageio_ffmpeg/binaries/ffmpeg-macos-aarch64-v7.1"));
+        return File.Exists(dev) ? dev : "ffmpeg";
+    }
     public string FfmpegPath => ffmpeg;
 
     // Uploaded and linked files are untrusted input. Without these, ffmpeg will follow playlists
     // (HLS, concat) to other files or URLs. Allow only plain local files and real video containers.
+    internal const string FormatWhitelist = "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,mpegts,mpeg,mpegvideo,asf,ogg,flv,h264,hevc,m4v";
+
     private static readonly string[] SafeInput =
     [
         "-protocol_whitelist", "file",
-        "-format_whitelist", "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,mpegts,mpeg,mpegvideo,asf,ogg,flv,h264,hevc,m4v"
+        "-format_whitelist", FormatWhitelist
     ];
 
     private async Task<(int Code, string Error)> Run(string[] args, CancellationToken cancellationToken)
@@ -32,6 +44,7 @@ public sealed class VideoTools(IWebHostEnvironment env)
             }
         };
         foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
+        ChildProcess.ScrubSecrets(process.StartInfo);
         try { process.Start(); }
         catch (Exception) { throw new UserError("FFmpeg is unavailable. Set CCTV_FFMPEG to its executable path.", 503); }
         var stderr = process.StandardError.ReadToEndAsync();
@@ -84,7 +97,7 @@ public sealed class VideoTools(IWebHostEnvironment env)
         // Matches the notebook's frame-index stride and full-duration even subsampling.
         var stride = Math.Max(1, (int)Math.Round(fps * 2, MidpointRounding.ToEven));
         var filter = $"select=not(mod(n\\,{stride})),scale=w='if(gte(iw,ih),min(640,iw),trunc(iw*min(1,640/ih)))':h='if(gte(iw,ih),trunc(ih*min(1,640/iw)),min(640,ih))':flags=area";
-        var r = await Run(["-y", .. SafeInput, "-i", Path.Combine(folder, "video"), "-vf", filter, "-fps_mode", "vfr", Path.Combine(output, "%04d.png")], ct);
+        var r = await Run(["-y", .. SafeInput, "-i", Path.Combine(folder, "video"), "-vf", filter, "-fps_mode", "vfr", "-frames:v", Math.Max(600, MaxFrames * 4).ToString(CultureInfo.InvariantCulture), Path.Combine(output, "%04d.png")], ct);
         var all = Directory.GetFiles(output, "*.png").Order().ToArray();
         if (r.Code != 0 || all.Length == 0) throw new UserError("Could not extract video frames.", 422);
         var indices = all.Length <= MaxFrames ? Enumerable.Range(0, all.Length).ToArray() :

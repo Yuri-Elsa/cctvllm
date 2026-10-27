@@ -15,7 +15,7 @@ public sealed class FolderWatcherService(QueueStore store, IVideoIngest ingest, 
     // from coming back on the next poll, and a file that cannot be read from being retried
     // (and logged) every few seconds. A changed file gets a new key, so it is tried again.
     // Lost on restart.
-    private readonly HashSet<string> handled = new();
+    private readonly Dictionary<string, string> handled = new();   // key -> file path, so entries of deleted files can be dropped
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -65,6 +65,7 @@ public sealed class FolderWatcherService(QueueStore store, IVideoIngest ingest, 
                 }
             }
             foreach (var path in seen.Keys.Where(p => !File.Exists(p)).ToList()) seen.Remove(path);
+            foreach (var key in handled.Where(kv => !File.Exists(kv.Value)).Select(kv => kv.Key).ToList()) handled.Remove(key);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex) { logger.LogWarning(ex, "Folder watch poll failed."); }
@@ -105,7 +106,7 @@ public sealed class FolderWatcherService(QueueStore store, IVideoIngest ingest, 
         catch (IOException) { return false; }
 
         var key = $"{path}|{info.Length}|{info.LastWriteTimeUtc.Ticks}";
-        if (handled.Contains(key)) return false;
+        if (handled.ContainsKey(key)) return false;
 
         var current = (info.Length, info.LastWriteTimeUtc);
         var finishedSegment = info.Length > 0 && rtsp.OwnsFile(path);
@@ -113,7 +114,7 @@ public sealed class FolderWatcherService(QueueStore store, IVideoIngest ingest, 
         seen[path] = current;
         if (!unchanged || IsLocked(path)) return false;
 
-        handled.Add(key);
+        handled[key] = path;
         seen.Remove(path);
         return true;
     }

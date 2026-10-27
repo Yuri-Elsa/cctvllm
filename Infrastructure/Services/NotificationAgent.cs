@@ -78,6 +78,15 @@ public static class AgentPolicy
         return null;
     }
 
+    // An "ignore" decision does not silence the alert. The video is still flagged, so one low-priority channel
+    // gets a note that the agent judged it not urgent: email first, otherwise the webhook. WhatsApp is never
+    // used for this (it is the channel people look at right away). With neither channel there is nowhere
+    // quiet to put it, and the decision is only logged, as before.
+    public static IReadOnlyList<string>? RouteIgnored(IReadOnlyList<string> enabled) =>
+        enabled.Contains("email") ? new[] { "email" }
+        : enabled.Contains("webhook") ? new[] { "webhook" }
+        : null;
+
     private static string Truncate(string text) => text.Length <= MaxSummaryChars ? text : text[..MaxSummaryChars] + "…";
 }
 

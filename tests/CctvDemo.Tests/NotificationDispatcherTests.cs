@@ -170,4 +170,52 @@ public class NotificationDispatcherTests
         Assert.Equal("not configured", results["off"]);
         Assert.Equal(0, off.Attempts);
     }
+
+    [Fact]
+    public async Task Weapon_flag_is_sent_at_once_even_inside_the_throttle_window()
+    {
+        await using var h = new Harness(Opts());
+        await h.StartAsync();
+        h.Dispatcher.Enqueue(Flagged("lobby"));
+        await Wait.Until(() => h.Notifier.Sent.Count == 1);
+
+        var weapon = Flagged("lobby") with { Weapon = "yes" };
+        h.Dispatcher.Enqueue(weapon);
+        await Wait.Until(() => h.Notifier.Sent.Count == 2);
+        Assert.Equal(weapon.Id, h.Notifier.Sent.Last().JobId);
+    }
+
+    [Fact]
+    public void Digest_carries_the_most_severe_alert_not_just_the_newest()
+    {
+        NotificationPayload P(string id, bool weapon, string? urgency = null) =>
+            new(id, "lobby", DateTimeOffset.UtcNow, "x", true, weapon, "http://x", 0, AlertKind.Flag, urgency);
+
+        var group = new List<NotificationPayload> { P("a", false), P("weapon", true), P("c", false, AgentUrgency.High) };
+        Assert.Equal("weapon", NotificationDispatcher.MostSevere(group).JobId);
+
+        var equal = new List<NotificationPayload> { P("a", false), P("b", false) };
+        Assert.Equal("b", NotificationDispatcher.MostSevere(equal).JobId);   // ties: newest
+    }
+
+    private sealed class HangingNotifier : INotifier
+    {
+        public string Name => "hang";
+        public bool Enabled => true;
+        public Task SendAsync(NotificationPayload payload, CancellationToken ct) => Task.Delay(Timeout.Infinite, ct);
+    }
+
+    [Fact]
+    public async Task A_notifier_that_hangs_times_out_and_does_not_stop_the_dispatcher()
+    {
+        var options = Opts();
+        options.SendTimeout = TimeSpan.FromMilliseconds(50);
+        await using var h = new Harness(options, null, new HangingNotifier());
+        await h.StartAsync();
+
+        h.Dispatcher.Enqueue(Flagged("lobby"));
+        await Wait.Until(() => h.Notifier.Sent.Count == 1);          // the healthy channel still delivers
+        h.Dispatcher.Enqueue(Flagged("garage"));
+        await Wait.Until(() => h.Notifier.Sent.Count == 2);          // and the loop is still alive afterwards
+    }
 }

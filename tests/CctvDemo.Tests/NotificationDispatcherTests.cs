@@ -218,4 +218,84 @@ public class NotificationDispatcherTests
         h.Dispatcher.Enqueue(Flagged("garage"));
         await Wait.Until(() => h.Notifier.Sent.Count == 2);          // and the loop is still alive afterwards
     }
+
+    private static NotificationOptions FastRetry(NotificationOptions options)
+    {
+        options.RetryBase = TimeSpan.FromMilliseconds(10);
+        options.RetryMax = TimeSpan.FromMilliseconds(20);
+        return options;
+    }
+
+    [Fact]
+    public async Task A_channel_that_keeps_failing_is_retried_later_until_it_works()
+    {
+        var flaky = new FakeNotifier("fake", failTimes: 3);              // the first three sends fail
+        await using var h = new Harness(FastRetry(Opts(attempts: 1)), flaky);
+        await h.StartAsync();
+
+        h.Dispatcher.Enqueue(Flagged("lobby"));
+        await Wait.Until(() => h.Sink.Records.Count == 4);                // three failures, then the delivery
+
+        Assert.Equal(4, flaky.Attempts);
+        Assert.Single(flaky.Sent);
+        Assert.NotNull(h.Sink.Records.Last().NotifiedAt);
+        Assert.Equal(0, h.Dispatcher.PendingAlerts);
+    }
+
+    [Fact]
+    public async Task A_retry_goes_only_to_the_channel_that_failed()
+    {
+        var working = new FakeNotifier("webhook");
+        var flaky = new FakeNotifier("email", failTimes: 1);
+        await using var h = new Harness(FastRetry(Opts(attempts: 1)), working, flaky);
+        await h.StartAsync();
+
+        h.Dispatcher.Enqueue(Flagged("lobby"));
+        await Wait.Until(() => flaky.Sent.Count == 1);
+        await Task.Delay(100);
+
+        Assert.Single(working.Sent);                                       // not repeated on the channel that already had it
+    }
+
+    [Fact]
+    public async Task A_channel_that_never_recovers_is_given_up_on_after_the_retry_window()
+    {
+        var options = FastRetry(Opts(attempts: 1));
+        options.RetryWindow = TimeSpan.FromMilliseconds(300);
+        var broken = new FakeNotifier("fake", failTimes: -1);
+        await using var h = new Harness(options, broken);
+        await h.StartAsync();
+
+        h.Dispatcher.Enqueue(Flagged("lobby"));
+        await Wait.Until(() => broken.Attempts >= 2);                      // it was retried at least once
+        await Wait.Until(() => h.Dispatcher.PendingAlerts == 0);           // and then dropped
+
+        Assert.Empty(broken.Sent);
+    }
+
+    [Fact]
+    public async Task Alerts_still_waiting_when_the_app_stopped_are_sent_after_a_restart()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "cctv-journal-" + Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(dir, "pending-alerts.json");
+        try
+        {
+            var options = Opts();
+            new AlertJournal(path, options).Add(
+                new NotificationPayload("job-9", "lobby", DateTimeOffset.UtcNow, "orang di pintu", true, false, "http://x") { Key = "k9" });
+
+            var notifier = new FakeNotifier();
+            var dispatcher = new NotificationDispatcher([notifier], new FakeSink(), Options.Create(options),
+                NullLogger<NotificationDispatcher>.Instance, new AlertJournal(path, options));
+            await dispatcher.StartAsync(CancellationToken.None);
+            await Wait.Until(() => notifier.Sent.Count == 1);
+            await Wait.Until(() => dispatcher.PendingAlerts == 0);
+            await dispatcher.StopAsync(CancellationToken.None);
+            dispatcher.Dispose();
+
+            Assert.Equal("job-9", notifier.Sent.Single().JobId);
+            Assert.Equal(0, new AlertJournal(path, options).Count);        // and it is not sent a second time on the next start
+        }
+        finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
+    }
 }

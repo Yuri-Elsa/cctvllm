@@ -12,11 +12,13 @@ public sealed class NotificationDispatcher : BackgroundService
     private readonly ILogger<NotificationDispatcher> logger;
     private readonly Dictionary<string, Camera> cameras = new();
     private readonly object gate = new();
+    private readonly AlertJournal journal;
 
     public NotificationDispatcher(IEnumerable<INotifier> notifiers, INotificationResultSink sink,
-        IOptions<NotificationOptions> options, ILogger<NotificationDispatcher> logger)
+        IOptions<NotificationOptions> options, ILogger<NotificationDispatcher> logger, AlertJournal? journal = null)
     {
         this.notifiers = notifiers.ToList(); this.sink = sink; this.options = options.Value; this.logger = logger;
+        this.journal = journal ?? new AlertJournal(null, this.options);
         queue = Channel.CreateBounded<NotificationPayload>(new BoundedChannelOptions(this.options.QueueCapacity)
         {
             FullMode = BoundedChannelFullMode.DropOldest,
@@ -28,13 +30,24 @@ public sealed class NotificationDispatcher : BackgroundService
 
     public IReadOnlyList<string> EnabledChannels() => notifiers.Where(n => n.Enabled).Select(n => n.Name).ToList();
 
-    public void EnqueueSystem(NotificationPayload payload) => queue.Writer.TryWrite(payload);
+    // Alerts accepted but not yet delivered (waiting, held for a digest, or being retried).
+    internal int PendingAlerts => journal.Count;
+
+    // Every alert is written to the journal before it is queued, so it survives a restart.
+    private void Accept(NotificationPayload payload)
+    {
+        var keyed = payload with { Key = Guid.NewGuid().ToString("N") };
+        journal.Add(keyed);
+        queue.Writer.TryWrite(keyed);
+    }
+
+    public void EnqueueSystem(NotificationPayload payload) => Accept(payload);
 
     public void EnqueueFailure(VideoJob job)
     {
         var reason = job.Error ?? "Analisis gagal.";
         if (reason.Length > options.MaxDescriptionChars) reason = reason[..options.MaxDescriptionChars] + "…";
-        queue.Writer.TryWrite(new NotificationPayload(job.Id, job.CameraName ?? "(kamera tidak diketahui)",
+        Accept(new NotificationPayload(job.Id, job.CameraName ?? "(kamera tidak diketahui)",
             job.SegmentStart ?? job.Created, reason, false, false,
             $"{options.ReviewBaseUrl.TrimEnd('/')}/#job={job.Id}", 0, AlertKind.JobFailed));
     }
@@ -52,7 +65,7 @@ public sealed class NotificationDispatcher : BackgroundService
             ? "Diabaikan agen (prioritas rendah): " + (string.IsNullOrWhiteSpace(decision!.Reason) ? "tanpa alasan." : decision.Reason)
             : decision?.Summary;
         if (summary is { Length: > AgentPolicy.MaxSummaryChars }) summary = summary[..AgentPolicy.MaxSummaryChars] + "…";
-        queue.Writer.TryWrite(new NotificationPayload(job.Id, job.CameraName ?? "(kamera tidak diketahui)",
+        Accept(new NotificationPayload(job.Id, job.CameraName ?? "(kamera tidak diketahui)",
             job.SegmentStart ?? job.Created, description, job.Suspicious == "yes", job.Weapon == "yes",
             $"{options.ReviewBaseUrl.TrimEnd('/')}/#job={job.Id}", 0, AlertKind.Flag,
             urgency, summary, channels));
@@ -76,6 +89,8 @@ public sealed class NotificationDispatcher : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var flusher = FlushLoop(stoppingToken);
+        // Alerts that were still waiting when the app last stopped go through the normal path again.
+        foreach (var recovered in journal.Recovered) queue.Writer.TryWrite(recovered);
         try
         {
             await foreach (var payload in queue.Reader.ReadAllAsync(stoppingToken))
@@ -133,12 +148,26 @@ public sealed class NotificationDispatcher : BackgroundService
                     try { await Deliver(MostSevere(group) with { MergedCount = group.Count - 1 }, group, ct); }
                     catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogError(ex, "Digest dispatch failed"); }
                 }
+                await RetryDue(ct);
             }
         }
         catch (OperationCanceledException) { }
     }
 
-    private async Task Deliver(NotificationPayload message, List<NotificationPayload> covered, CancellationToken ct)
+    // Channels that failed on every attempt are tried again here, with growing pauses, until the retry window ends.
+    private async Task RetryDue(CancellationToken ct)
+    {
+        journal.Expire(DateTimeOffset.UtcNow);
+        foreach (var due in journal.DueRetries(DateTimeOffset.UtcNow))
+        {
+            var covered = due.CoveredJobIds.Select(id => due.Message with { JobId = id }).ToList();
+            if (covered.Count == 0) covered.Add(due.Message);
+            try { await Deliver(due.Message, covered, ct, due.Key); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogError(ex, "Retry failed for {Job}", due.Message.JobId); }
+        }
+    }
+
+    private async Task Deliver(NotificationPayload message, List<NotificationPayload> covered, CancellationToken ct, string? retryKey = null)
     {
         var active = notifiers.Where(n => n.Enabled && (message.Channels is null || message.Channels.Contains(n.Name))).ToList();
         var sentBy = new HashSet<string>();
@@ -165,6 +194,13 @@ public sealed class NotificationDispatcher : BackgroundService
         var real = active.Where(n => n.Name != "log").ToList();
         var ok = real.Count == 0 ? sentBy.Contains("log") : real.Any(n => sentBy.Contains(n.Name));
         var summary = failures.Count > 0 ? string.Join(" | ", failures) : null;
+        // Delivered everywhere it could be: nothing left to do. Otherwise keep it, addressed only to the channels
+        // that failed, so a retry never repeats a message on a channel that already got it.
+        var failedChannels = real.Where(n => !sentBy.Contains(n.Name)).Select(n => n.Name).ToList();
+        var keys = covered.Select(c => c.Key).Append(retryKey);
+        if (failedChannels.Count == 0) journal.Complete(keys);
+        else if (!journal.Fail(message with { Channels = failedChannels }, covered, retryKey))
+            logger.LogError("Alert for {Job} could not be delivered on {Channels} and was dropped", message.JobId, string.Join(", ", failedChannels));
         foreach (var item in covered.Where(i => !string.IsNullOrEmpty(i.JobId)))
             await sink.RecordAsync(item.JobId, ok ? DateTimeOffset.UtcNow : null, summary, ct);
     }

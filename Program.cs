@@ -71,6 +71,10 @@ builder.Services.AddSingleton<INotifier>(sp => sp.GetRequiredService<WhatsAppNot
 builder.Services.AddSingleton<INotifier, EmailNotifier>();
 builder.Services.AddSingleton<INotifier, LogNotifier>();
 builder.Services.AddSingleton<INotificationResultSink, QueueNotificationSink>();
+builder.Services.AddSingleton(sp => new AlertJournal(
+    Path.Combine(sp.GetRequiredService<QueueStore>().Root, "pending-alerts.json"),
+    sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<NotificationOptions>>().Value,
+    sp.GetRequiredService<ILoggerFactory>().CreateLogger<AlertJournal>()));
 builder.Services.AddSingleton<NotificationDispatcher>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<NotificationDispatcher>());
 builder.Services.AddOptions<WatchdogOptions>();

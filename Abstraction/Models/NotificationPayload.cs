@@ -11,6 +11,9 @@ public sealed record NotificationPayload(
     bool Suspicious, bool Weapon, string ReviewUrl, int MergedCount = 0, string Kind = AlertKind.Flag,
     string? Urgency = null, string? Summary = null, IReadOnlyList<string>? Channels = null)
 {
+    // Identifies this alert in the AlertJournal. Set by the dispatcher when it accepts the alert.
+    public string? Key { get; init; }
+
     public const string Disclaimer = "Penandaan otomatis oleh model, bukan kesimpulan. Wajib ditinjau manusia.";
 
     public bool IsModelFlag => Kind == AlertKind.Flag;

@@ -163,7 +163,8 @@ public sealed class QueueStore : IQueueRepository
             foreach (var id in doomed)
             {
                 try { var dir = Folder(id); if (Directory.Exists(dir)) Directory.Delete(dir, true); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }  
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { } 
+            }
             return (doomed.Count, wanted.Count - doomed.Count);
         }
     }

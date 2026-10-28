@@ -268,6 +268,15 @@ app.MapGet("/api/export", (string? format, string? camera, bool? flagged, QueueS
         ? Results.File(JobExporter.ToCsv(jobs), "text/csv; charset=utf-8", $"cctv-jobs-{stamp}.csv")
         : Results.File(JobExporter.ToJson(jobs, DateTimeOffset.UtcNow), "application/json", $"cctv-jobs-{stamp}.json");
 });
+// Precision / recall for the suspicious threshold, from the reviewers' verdicts (see Calibration).
+app.MapGet("/api/calibration", (string? camera, bool? assumeNormal, string? format, QueueStore s) => {
+    format = (format ?? "json").ToLowerInvariant();
+    if (format is not ("json" or "csv")) throw new UserError("Format must be json or csv.");
+    var report = Calibration.Compute(s.Jobs(), camera, assumeNormal ?? true, s.Settings.SuspiciousThreshold);
+    return format == "csv"
+        ? Results.File(Calibration.ToCsv(report), "text/csv; charset=utf-8", $"cctv-calibration-{DateTime.Now:yyyyMMdd-HHmmss}.csv")
+        : Results.Ok(report);
+});
 app.MapPost("/api/queue/{action}", (string action, QueueStore s) => {
     if (action is not ("start" or "pause")) throw new UserError("Unknown queue action.");
     s.SetRunning(action == "start"); return Results.Ok(new { ok = true });

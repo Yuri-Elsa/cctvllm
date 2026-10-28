@@ -40,7 +40,10 @@ upload / linked folder / RTSP segments
  flagged?  ──►  notification agent  ──►  WhatsApp / email / webhook / log
         │
         ▼
- human review: Confirmed / False alarm
+ human review: Confirmed / False alarm (flagged),  Missed event / Normal (not flagged)
+        │
+        ▼
+ Calibration page: precision / recall for every threshold
 ```
 
 Processing details:
@@ -287,6 +290,44 @@ It prints its events as JSON lines and writes the clips into `--out`. To test th
 a small RTSP server such as MediaMTX and `ffmpeg -re -stream_loop -1 -i video.mp4 -c copy -f rtsp rtsp://localhost:8554/test`
 give you an `rtsp://` address to put in `CCTV_RTSP_<NAME>`.
 
+## Threshold calibration
+
+Whether a video is flagged as suspicious is decided by comparing the model's probability of "yes" (p(yes)) with the
+**suspicious threshold** in Model settings. The right value depends on your cameras, your model and your prompt, so the
+app can work it out from your own review verdicts. Open **Calibration** in the sidebar.
+
+**Giving it the data.** Both kinds of verdict are needed, because a threshold can be wrong in two directions:
+
+| You see...                       | Press            | It means                                                  |
+| -------------------------------- | ---------------- | --------------------------------------------------------- |
+| a flagged video, and it is real  | **Confirmed**    | a real event, correctly flagged                           |
+| a flagged video, nothing happened | **False alarm**  | a normal video that was flagged                           |
+| an unflagged video, but it was an event | **Missed event** | a real event the threshold let through                |
+| an unflagged video, nothing happened | **Normal**       | a normal video, correctly left alone                      |
+
+Flagged videos show Confirmed / False alarm; every other finished video shows Missed event / Normal. Looking only at
+flagged videos tells you how many alerts were wrong, but nothing about the events that were never flagged, so some
+unflagged videos (a random sample is fine) have to be checked too.
+
+**What the page shows.** For every threshold from 0 to 1 it counts what would have happened with your reviewed videos:
+
+- **Precision** ("alerts right"): of the videos flagged, how many were real events.
+- **Recall** ("events found"): of the real events, how many were flagged.
+- **F1**: one number that combines the two. **False alarms** and **Missed events** are the plain counts behind them.
+
+It then suggests three thresholds: **Best balance** (highest F1, in the middle of a plateau of equal values),
+**Catch almost everything** (the highest threshold that still finds 95% of the events) and **Few false alarms** (the lowest
+threshold at which 90% of the alerts are real). **Use** fills the value into Model settings; press Save there to apply it.
+**Download curve (CSV)** gives the whole table for a report or a spreadsheet.
+
+What to know before trusting it:
+
+- **Sample size matters most.** With 10 real events, finding 8 of them is compatible with a true recall anywhere from roughly 44% to 97% (95% confidence interval); with 30 events, finding 28 narrows it to about 78%-99%. The page warns below 10 events and 30 normal videos; report results with their counts ("8 of 10").
+- **Unreviewed videos.** A flagged video nobody reviewed is left out (its truth is unknown). An unflagged, unreviewed one is counted as normal by default, which is an assumption: if the model missed events among them, recall is overestimated. Untick the box to use only videos a person has judged.
+- **Left out on purpose:** videos without a probability score (older Ollama versions only answer yes/no), videos where nobody was detected, and weapon flags (that flag has no threshold). The page says how many.
+- **It describes one model.** Scores from a different model, prompt or camera angle do not transfer, so recalibrate after changing any of them. The page warns when the scores come from more than one model.
+- **Live mode helps:** because live clips are only saved while someone is in view, and the retention settings keep flagged ones longer, the app can collect its own sample without anyone supplying recordings.
+
 ## Notifications
 
 Channels are `log` (always on), `webhook`, `email` and `whatsapp`. A channel is active only when its variables are set.
@@ -347,10 +388,11 @@ The UI uses these endpoints, and they are what `eval/run_app_eval.py` drives.
 | `POST /api/folder`, `/api/folder/refresh`, `GET /api/folder/status` | Link, refresh and watch the linked folder             |
 | `POST /api/queue/start`, `/api/queue/pause`                         | Run or pause the queue                                |
 | `POST /api/videos/{id}/cancel`, `/retry`, `/delete`                 | Per-video actions                                     |
-| `POST /api/videos/{id}/review`                                      | `{"state": "confirmed" \| "false_alarm" \| null}`     |
+| `POST /api/videos/{id}/review`                                      | `{"state": "confirmed" \| "false_alarm" \| "missed" \| "normal" \| null}` |
 | `GET /api/videos/{id}/video`, `/poster.jpg`                         | Media (range requests supported)                      |
 | `GET /api/cameras`                                                  | RTSP camera status                                    |
 | `GET /api/export?format=csv\|json&camera=&flagged=true`             | Export jobs                                           |
+| `GET /api/calibration?camera=&assumeNormal=true&format=json\|csv`    | Precision / recall per threshold from the review verdicts |
 | `POST /api/notifications/test`                                      | Send a test notification                              |
 
 The export includes camera, segment time, description, flags, review state, notification result, model, timings, person-detection stats, suspicious score and threshold, and the agent's action and urgency.
@@ -382,7 +424,7 @@ Persistence sits behind `IQueueRepository`. `QueueStore` keeps state in `data/st
 dotnet test tests/CctvDemo.Tests
 ```
 
-The unit tests cover authentication and login throttling, folder watching, export, retention, scoring, the notification dispatcher, agent and alert journal, WhatsApp options and review/preflight logic. `HttpPipelineTests` also starts the real app in memory and checks the security headers, the cross-origin check and the open `/api/health` over HTTP. The evaluation scripts have their own tests with a mock server:
+The unit tests cover authentication and login throttling, folder watching, export, retention, scoring, the notification dispatcher, agent and alert journal, threshold calibration, WhatsApp options and review/preflight logic. `HttpPipelineTests` also starts the real app in memory and checks the security headers, the cross-origin check and the open `/api/health` over HTTP. The evaluation scripts have their own tests with a mock server:
 
 ```bash
 python eval/tests/test_eval_pipeline.py

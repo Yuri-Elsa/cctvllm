@@ -98,7 +98,9 @@ public sealed class QueueStore : IQueueRepository
     {
         lock (gate) { var index = items.FindIndex(j => j.Id == id); if (index >= 0) { items[index] = update(items[index]); Persist(); } }
     }
-    public static readonly string[] ReviewStates = ["confirmed", "false_alarm"];
+    // confirmed / false_alarm judge a flagged video; missed / normal judge one that was not flagged.
+    // Together they say what really happened, which is what threshold calibration needs.
+    public static readonly string[] ReviewStates = ["confirmed", "false_alarm", "missed", "normal"];
     public void SetReview(string id, string? state)
     {
         if (!string.IsNullOrEmpty(state) && !ReviewStates.Contains(state)) throw new UserError("Unknown review state.");

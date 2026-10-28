@@ -1345,10 +1345,17 @@ dialog .toggle-label input {
   color: #a61624;
 }
 
-.review button[aria-pressed="true"].review-false_alarm {
+.review button[aria-pressed="true"].review-false_alarm,
+.review button[aria-pressed="true"].review-normal {
   background: #f1f5e4;
   border-color: #576a19;
   color: #576a19;
+}
+
+.review button[aria-pressed="true"].review-missed {
+  background: #fff4e0;
+  border-color: #b45309;
+  color: #b45309;
 }
 
 .review-chip,
@@ -1365,9 +1372,15 @@ dialog .toggle-label input {
   color: #a61624;
 }
 
-.review-chip.false_alarm {
+.review-chip.false_alarm,
+.review-chip.normal {
   background: #f1f5e4;
   color: #576a19;
+}
+
+.review-chip.missed {
+  background: #fff4e0;
+  color: #b45309;
 }
 
 .notify-line {
@@ -2041,4 +2054,219 @@ button:hover:not(:disabled) {
     border-radius: 0;
     box-shadow: none;
   }
+}
+
+/* Threshold calibration */
+#calibration {
+  width: 820px;
+  overflow-y: auto;
+}
+
+.cal-intro,
+.cal-note {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.cal-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 22px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.cal-controls label {
+  margin-top: 0;
+}
+
+.cal-controls .cal-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cal-controls .cal-check input {
+  width: auto;
+}
+
+.cal-csv {
+  font-size: 12px;
+  margin-left: auto;
+}
+
+.cal-counts {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  margin: 6px 0 10px;
+}
+
+.cal-warnings {
+  margin: 0 0 12px;
+  padding: 10px 14px 10px 30px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  border-radius: 10px;
+  background: #fff4e0;
+  color: #8a4b08;
+}
+
+.cal-chart {
+  width: 100%;
+  height: auto;
+  margin-top: 6px;
+}
+
+.cal-grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.cal-axis {
+  font-size: 11px;
+  fill: var(--muted);
+}
+
+.cal-line {
+  fill: none;
+  stroke-width: 2.2;
+  stroke-linejoin: round;
+}
+
+.cal-line.precision,
+.cal-legend .precision::before {
+  stroke: var(--blue);
+  background: var(--blue);
+}
+
+.cal-line.recall,
+.cal-legend .recall::before {
+  stroke: #2f9e44;
+  background: #2f9e44;
+}
+
+.cal-line.f1,
+.cal-legend .f1::before {
+  stroke: #8e44ad;
+  background: #8e44ad;
+}
+
+.cal-line.f1 {
+  stroke-dasharray: 5 4;
+}
+
+.cal-mark {
+  stroke-width: 1.2;
+  stroke-dasharray: 3 3;
+}
+
+.cal-mark.now,
+.cal-legend .now::before {
+  stroke: #d97706;
+  background: #d97706;
+  stroke-dasharray: none;
+  stroke-width: 2;
+}
+
+.cal-mark.pick {
+  stroke: var(--muted);
+}
+
+.cal-marktext {
+  font-size: 10.5px;
+  fill: var(--muted);
+}
+
+.cal-marktext.now {
+  fill: #d97706;
+  font-weight: 600;
+}
+
+.cal-legend {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 4px 0 14px;
+}
+
+.cal-legend span::before {
+  content: "";
+  display: inline-block;
+  width: 14px;
+  height: 3px;
+  margin-right: 6px;
+  vertical-align: middle;
+  border-radius: 2px;
+}
+
+.cal-picks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.cal-pick {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px;
+}
+
+.cal-pick h4 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.cal-pick p {
+  margin: 6px 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.cal-pick .cal-stats {
+  color: var(--ink);
+}
+
+.cal-threshold {
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--deep);
+}
+
+.cal-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  margin-bottom: 8px;
+}
+
+.cal-table th,
+.cal-table td {
+  padding: 6px 8px;
+  text-align: right;
+  border-bottom: 1px solid var(--line);
+}
+
+.cal-table th:first-child,
+.cal-table td:first-child,
+.cal-table th:last-child,
+.cal-table td:last-child {
+  text-align: left;
+}
+
+.cal-table th {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.cal-table tr.now td {
+  background: #fff4e0;
+  font-weight: 600;
 }

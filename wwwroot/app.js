@@ -15,7 +15,10 @@ const isDropped = j => j.status === 'cancelled' && j.stage === 'Dropped (backlog
 const NO_CAMERA = '::none';
 const segmentTime = iso => iso ? new Date(iso).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
 const ago = iso => { if (!iso) return 'No data yet'; const s = Math.max(0, Math.round((Date.now() - new Date(iso)) / 1000)); return s < 5 ? 'just now' : s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : `${Math.floor(s / 86400)}d ago` };
-const REVIEW = { confirmed: 'Confirmed', false_alarm: 'False alarm' };
+const REVIEW = { confirmed: 'Confirmed', false_alarm: 'False alarm', missed: 'Missed event', normal: 'Normal' };
+// A flagged video is judged right or wrong; one that was not flagged is judged normal, or "should have been flagged".
+// Both kinds of verdict are needed to calibrate the threshold (Calibration page).
+const REVIEW_FOR = { flagged: ['confirmed', 'false_alarm'], unflagged: ['missed', 'normal'] };
 function notifyInfo(j) {
     if (j.notifiedAt) return { cls: j.notifyError ? 'warn' : 'ok', text: `Sent${j.screening && j.screening.agent && j.screening.agent.action === 'ignore' ? ' (low priority: agent judged it not urgent)' : ''} ${segmentTime(j.notifiedAt)}` + (j.notifyError ? ` · some channels failed: ${j.notifyError}` : '') };
     if (j.notifyError) return { cls: 'fail', text: `Not delivered: ${j.notifyError}` };
@@ -29,7 +32,10 @@ const agentSummary = j => { const a = j.screening && j.screening.agent; if (!a |
 const notifyLine = j => { const n = notifyInfo(j); return (n ? `<p class="notify-line ${n.cls}"><strong>Notification</strong> ${escapeHtml(n.text)}</p>` : '') + agentSummary(j) };
 const reviewChip = j => j.reviewState && REVIEW[j.reviewState] ? `<span class="review-chip ${escapeHtml(j.reviewState)}">${REVIEW[j.reviewState]}</span>` : '';
 const notifyChip = j => { const n = notifyInfo(j); return n && (n.cls === 'fail' || n.cls === 'warn') ? '<span class="notify-chip">Notify failed</span>' : '' };
-const reviewBar = j => `<div class="review" role="group" aria-label="Review this alert"><span class="review-label">Your review</span>${Object.entries(REVIEW).map(([value, label]) => `<button type="button" class="review-${value}" data-review="${j.id}" data-state="${value}" aria-pressed="${j.reviewState === value}">${label}</button>`).join('')}</div>`;
+const reviewBar = j => {
+    const flagged = isFlagged(j);
+    return `<div class="review" role="group" aria-label="${flagged ? 'Review this alert' : 'Check this video that was not flagged'}"><span class="review-label">${flagged ? 'Your review' : 'Was it really normal?'}</span>${REVIEW_FOR[flagged ? 'flagged' : 'unflagged'].map(value => `<button type="button" class="review-${value}" data-review="${j.id}" data-state="${value}" aria-pressed="${j.reviewState === value}">${REVIEW[value]}</button>`).join('')}</div>`;
+};
 const matchesCamera = j => cameraFilter === 'all' || (cameraFilter === NO_CAMERA ? !j.cameraName : j.cameraName === cameraFilter);
 const cameraChip = j => j.cameraName ? `<span class="camera-chip">${escapeHtml(j.cameraName)}</span>` : '';
 const segmentLabel = j => j.segmentStart ? `<time datetime="${escapeHtml(j.segmentStart)}">${escapeHtml(segmentTime(j.segmentStart))}</time>` : '';
@@ -100,7 +106,7 @@ function render() {
     $('detail').innerHTML = job ? `<div class="video-wrap"><video controls playsinline preload="metadata" src="/api/videos/${job.id}/video" poster="/api/videos/${job.id}/poster.jpg"></video><div class="video-meta">${escapeHtml(job.name)} · ${duration(job.duration)}${job.cameraName || job.segmentStart ? `<div class="video-meta-sub">${cameraChip(job)}${segmentLabel(job)}</div>` : ''}</div></div><div class="result" id="result">${result(job)}</div>` : '<div class="placeholder">Select a video</div><div class="result"><h3>Description</h3><p class="waiting">No description yet.</p></div>';
 }
 function result(j) {
-    if (j.status === 'completed') return `<h3>Description</h3><p>${escapeHtml(j.description)}</p><div class="tags"><span class="flag-${j.suspicious === 'yes' ? 'yes' : 'no'}">Suspicious: ${escapeHtml(j.suspicious ?? 'unknown')}</span><span class="flag-${j.weapon === 'yes' ? 'yes' : 'no'}">Weapon: ${escapeHtml(j.weaponEnabled === false ? 'Disabled' : j.weapon ?? 'unknown')}</span><span>${j.timestamps.length} frames · ${j.elapsed}s${j.personLabels ? ' · Person labels' : ''}</span>${scoreTag(j)}</div><div class="result-actions"><button data-copy="${j.id}">Copy</button><button data-download="${j.id}">Download</button></div>${isFlagged(j) ? reviewBar(j) : ''}${notifyLine(j)}`;
+    if (j.status === 'completed') return `<h3>Description</h3><p>${escapeHtml(j.description)}</p><div class="tags"><span class="flag-${j.suspicious === 'yes' ? 'yes' : 'no'}">Suspicious: ${escapeHtml(j.suspicious ?? 'unknown')}</span><span class="flag-${j.weapon === 'yes' ? 'yes' : 'no'}">Weapon: ${escapeHtml(j.weaponEnabled === false ? 'Disabled' : j.weapon ?? 'unknown')}</span><span>${j.timestamps.length} frames · ${j.elapsed}s${j.personLabels ? ' · Person labels' : ''}</span>${scoreTag(j)}</div><div class="result-actions"><button data-copy="${j.id}">Copy</button><button data-download="${j.id}">Download</button></div>${reviewBar(j)}${notifyLine(j)}`;
     if (j.status === 'failed') return `<h3>Generation failed</h3><p class="error">${escapeHtml(j.error)}</p><div class="result-actions"><button data-id="${j.id}" data-action="retry">Retry</button></div>${notifyLine(j)}`;
     if (isDropped(j)) return `<h3>Skipped: too many videos waiting</h3><p>${j.cameraName ? `Camera <strong>${escapeHtml(j.cameraName)}</strong> had` : 'This camera had'} more videos waiting than the model could process, so this older recording was skipped in favor of newer footage. It was <strong>not analysed</strong>: having no description does not mean nothing happened in this clip.</p><p class="waiting">The file is kept for now. Requeue it to analyse it anyway; if the queue is still full it may be dropped again.${j.error ? `<br><small>${escapeHtml(j.error)}</small>` : ''}</p><div class="result-actions"><button data-id="${j.id}" data-action="retry">Requeue</button></div>`;
     if (j.status === 'cancelled') return `<h3>Cancelled</h3><div class="result-actions"><button data-id="${j.id}" data-action="retry">Requeue</button></div>`;
@@ -253,6 +259,74 @@ document.addEventListener('keydown', e => { const row = e.target.closest('[data-
 refresh(); setInterval(refresh, 1200);
 
 $('navSettings').onclick = () => $('settingsButton').click();
+
+// ---- Threshold calibration: what each suspicious threshold would have caught, from the review verdicts -------------
+const pct = v => v == null ? '–' : `${Math.round(v * 100)}%`;
+$('navCalibration').onclick = () => { fillCalibrationCameras(); $('calibration').showModal(); loadCalibration() };
+$('calibrationClose').onclick = () => $('calibration').close();
+$('calCamera').onchange = $('calAssume').onchange = () => loadCalibration();
+$('calibration').addEventListener('click', e => {
+    const use = e.target.closest('[data-use-threshold]'); if (!use) return;
+    $('calibration').close(); $('settingsButton').click();
+    $('suspiciousThreshold').value = use.dataset.useThreshold;
+    toast(`Threshold ${use.dataset.useThreshold} filled in. Press Save to apply it.`);
+});
+function fillCalibrationCameras() {
+    const keep = $('calCamera').value;
+    const names = [...new Set(state.jobs.map(j => j.cameraName).filter(Boolean))].sort();
+    $('calCamera').innerHTML = '<option value="all">All cameras</option>' + names.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('')
+        + (state.jobs.some(j => !j.cameraName) ? '<option value="::none">Uploads and folders (no camera)</option>' : '');
+    if ([...$('calCamera').options].some(o => o.value === keep)) $('calCamera').value = keep;
+}
+async function loadCalibration() {
+    const query = `camera=${encodeURIComponent($('calCamera').value || 'all')}&assumeNormal=${$('calAssume').checked}`;
+    $('calCsv').href = `/api/calibration?format=csv&${query}`;
+    $('calResults').innerHTML = '<p class="cal-note">Calculating…</p>';
+    try { renderCalibration(await api(`/api/calibration?${query}`)) }
+    catch (err) { $('calResults').innerHTML = `<p class="cal-note">${escapeHtml(err.message)}</p>` }
+}
+function calChart(r) {
+    const W = 640, H = 270, L = 40, R = 12, T = 34, B = 44, w = W - L - R, h = H - T - B;
+    const x = t => (L + t * w).toFixed(1), y = v => (T + (1 - v) * h).toFixed(1);
+    const line = (key, cls) => {
+        let d = '', pen = false;
+        for (const p of r.curve) { const v = p[key]; if (v == null) { pen = false; continue } d += `${pen ? 'L' : 'M'}${x(p.threshold)},${y(v)}`; pen = true }
+        return `<path class="cal-line ${cls}" d="${d}"/>`;
+    };
+    const grid = [0, .25, .5, .75, 1].map(v => `<line class="cal-grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text class="cal-axis" x="${L - 6}" y="${(+y(v) + 4).toFixed(1)}" text-anchor="end">${Math.round(v * 100)}%</text>`).join('');
+    const ticks = [0, .2, .4, .6, .8, 1].map(t => `<text class="cal-axis" x="${x(t)}" y="${H - 22}" text-anchor="middle">${t}</text>`).join('')
+        + `<text class="cal-axis" x="${L + w / 2}" y="${H - 6}" text-anchor="middle">Suspicious threshold (a video is flagged when p(yes) is at least this)</text>`;
+    // Neighbouring labels would run into each other, so they take turns on two rows above the chart.
+    const mark = (t, cls, label, row) => `<line class="cal-mark ${cls}" x1="${x(t)}" x2="${x(t)}" y1="${T - 4 - row * 12}" y2="${T + h}"/><text class="cal-marktext ${cls}" x="${x(t)}" y="${T - 8 - row * 12}" text-anchor="middle">${escapeHtml(label)}</text>`;
+    const short = { balanced: 'best', recall: 'recall', precision: 'quiet' };
+    const marks = [...r.picks.map(p => ({ t: p.point.threshold, cls: 'pick', label: short[p.key] || p.key })), { t: r.currentThreshold, cls: 'now', label: 'now' }]
+        .sort((a, b) => a.t - b.t).map((m, i) => mark(m.t, m.cls, m.label, i % 2)).join('');
+    return `<svg class="cal-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Precision, recall and F1 for every threshold from 0 to 1"><title>Precision, recall and F1 for every threshold</title>${grid}${ticks}${line('f1', 'f1')}${line('precision', 'precision')}${line('recall', 'recall')}${marks}</svg>`
+        + '<div class="cal-legend"><span class="precision">Alerts that are right (precision)</span><span class="recall">Events found (recall)</span><span class="f1">F1</span><span class="now">current setting</span></div>';
+}
+function renderCalibration(r) {
+    const counts = `<div class="cal-counts"><span><b>${r.positives}</b> real events</span><span><b>${r.negatives}</b> normal videos${r.assumedNormal ? ` (${r.assumedNormal} assumed)` : ''}</span>`
+        + (r.pendingReview ? `<span><b>${r.pendingReview}</b> flagged, not reviewed yet</span>` : '') + (r.noScore ? `<span><b>${r.noScore}</b> without a score</span>` : '') + '</div>';
+    const warnings = r.warnings.length ? `<ul class="cal-warnings">${r.warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('')}</ul>` : '';
+    if (!r.used) { $('calResults').innerHTML = counts + warnings; return }
+    const picks = r.picks.length ? `<div class="cal-picks">${r.picks.map(p => {
+        const t = p.point.threshold.toFixed(2);
+        return `<div class="cal-pick"><h4>${escapeHtml(p.label)}</h4><div class="cal-threshold">${t}</div><p>${escapeHtml(p.why)}</p>`
+            + `<p class="cal-stats">Alerts right ${pct(p.point.precision)} · events found ${pct(p.point.recall)}<br>${p.point.truePositive} of ${r.positives} events found · ${p.point.falsePositive} false alarms</p>`
+            + `<button type="button" data-use-threshold="${t}">Use ${t}</button></div>`;
+    }).join('')}</div>` : '';
+    const rows = new Map();
+    const add = (p, tag) => { const row = rows.get(p.threshold) ?? { p, tags: [] }; if (tag) row.tags.push(tag); rows.set(p.threshold, row) };
+    for (let i = 0; i <= 10; i++) add(r.curve[i * 10]);
+    r.picks.forEach(p => add(p.point, p.label));
+    if (r.current) add(r.current, 'current setting');
+    const table = '<table class="cal-table"><thead><tr><th>Threshold</th><th>Alerts right</th><th>Events found</th><th>F1</th><th>False alarms</th><th>Missed events</th><th></th></tr></thead><tbody>'
+        + [...rows.values()].sort((a, b) => a.p.threshold - b.p.threshold).map(({ p, tags }) =>
+            `<tr class="${tags.includes('current setting') ? 'now' : ''}"><td>${p.threshold.toFixed(2)}</td><td>${pct(p.precision)}</td><td>${pct(p.recall)}</td><td>${pct(p.f1)}</td><td>${p.falsePositive}</td><td>${p.falseNegative}</td><td>${escapeHtml(tags.join(', '))}</td></tr>`).join('')
+        + '</tbody></table>';
+    $('calResults').innerHTML = counts + warnings + calChart(r) + picks + table
+        + '<p class="cal-note">These numbers describe only the videos you have reviewed. Report them with their counts (for example "8 of 10 events found"), and recalibrate when the model, the prompt or the camera changes.</p>';
+}
 
 $('showFlagged').onclick = () => setQueueFilter('flagged');
 $('filterFlagged').onclick = () => setQueueFilter('flagged');

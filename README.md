@@ -13,7 +13,6 @@ A local .NET 10 web app that reviews CCTV footage with a vision-language model. 
 - [Notifications](#notifications)
 - [Retention](#retention)
 - [Security and access](#security-and-access)
-- [Notebook GPU backend](#notebook-gpu-backend)
 - [HTTP API](#http-api)
 - [Project structure](#project-structure)
 - [Tests](#tests)
@@ -141,7 +140,6 @@ Open **http://127.0.0.1:8766**.
 
 | Setting               | What it does                                                                                            |
 | --------------------- | ------------------------------------------------------------------------------------------------------- |
-| Run model on          | _Ollama_ (local, loopback only) or _Notebook GPU_ (remote, see below)                                   |
 | Server URL / Model    | OpenAI-compatible endpoint; the model list is read from the server                                      |
 | Person labels (YOLO)  | Draw boxes and per-frame labels on the frames sent to the model                                         |
 | Person detector       | `YOLO` (default, fast) or `LLM` (asks the vision model per frame; slower)                               |
@@ -173,7 +171,7 @@ All runtime configuration is through environment variables. In `start.bat` use `
 | `CCTV_MAX_UPLOAD_GB` | `20`                           | Total size of uploaded videos. Uploads are refused (HTTP 507) once it is reached. Retention never deletes uploads, so remove them yourself |
 | `CCTV_NUM_CTX`     | server default                   | Context window (`num_ctx`) sent to Ollama, for example `16384`. If a prompt fills the window the app raises it once by itself; set this to fix a size. Larger windows use more memory |
 | `CCTV_ALLOW_UNC`   | off                              | Set to `1` to allow Windows network paths (`\\server\share`) when linking a folder. Blocked by default |
-| `CCTV_API_KEY`     | none                             | API key for the notebook backend. Never stored in the browser                  |
+| `CCTV_API_KEY`     | none                             | Bearer key sent to the model server. Never stored in the browser            |
 | `CCTV_UI_PASSWORD` | none                             | Turns on the sign-in page and protects every page and API call                 |
 | `CCTV_REVIEW_URL`  | `CCTV_URL`                       | Base URL used in review links inside notifications                             |
 
@@ -245,7 +243,7 @@ Channels are `log` (always on), `webhook`, `email` and `whatsapp`. A channel is 
   - `ignore` does not silence the alert. The flag is still sent as a **low-priority** note ("Diabaikan agen: …") to one quiet channel: email, or the webhook when there is no email. WhatsApp is never used for it. With only WhatsApp configured there is no quiet channel, so the decision is just logged on the job.
   - `request_more_frames` re-analyses the video once. If it is no longer flagged, nothing is sent.
   - If the agent fails or times out (60 s), the app falls back to the default behaviour: send through all active channels.
-  - With the agent off, only one channel configured, or notebook mode, alerts go to every active channel.
+  - With the agent off or only one channel configured, alerts go to every active channel.
 - **Throttling:** at most one message per camera, alert type and channel set every 5 minutes. Extras are merged into one digest ("+N digabung"). _Critical_ alerts, weapon flags and camera offline/recovered alerts are never held back. A digest reports the most serious alert it holds, not just the newest.
 - **Delivery:** each channel gets three attempts with exponential backoff and at most 30 seconds per attempt, so one hung server cannot block the others. A channel that still fails is **retried later** (after 30 s, 1 min, 2 min, … at most every 30 min) until `CCTV_ALERT_RETRY_HOURS` have passed, and only that channel is retried. Failures are saved on the job (`notifyError`) and cleared when a retry succeeds.
 - **Surviving a restart:** alerts that are waiting, held for a digest or being retried are kept in `data/pending-alerts.json` and sent again on the next start. Delivery is _at least once_: if the app stops in the middle of a send, the same alert can arrive twice. Alerts older than the retry window are dropped.
@@ -270,7 +268,7 @@ Applies **only to files in the RTSP folder**. Uploaded videos and files in a lin
 - With a password set, every page and API call needs a sign-in (12-hour cookie). Five wrong attempts lock an address out for five minutes. Changing the password signs everyone out. API calls without a session get `401`.
 - It is one shared password. The password is not encrypted over plain HTTP, so put the app behind HTTPS (a reverse proxy) before exposing it.
 - State-changing requests from another origin are rejected, and the _local_ model server must be a loopback address.
-- Only use trusted endpoints in notebook mode. Videos are sent to them. A non-loopback notebook host is refused unless it is listed in `CCTV_NOTEBOOK_HOSTS` (comma separated) and uses HTTPS (`CCTV_NOTEBOOK_ALLOW_HTTP=1` allows plain HTTP on a trusted LAN). `CCTV_API_KEY` is only ever sent to the endpoint that passes this check.
+- Videos are only sent to a model server on this computer (loopback addresses); any other address is refused. `CCTV_API_KEY`, if set, is only sent there.
 - The `Host` header is checked against DNS rebinding. Bound to loopback, only `localhost` and loopback addresses are accepted; to open the app under another name (for example through a reverse proxy) list it in `CCTV_ALLOWED_HOSTS`.
 - Behind a TLS-terminating reverse proxy set `CCTV_TRUST_PROXY=1` (and make sure the app is reachable only through the proxy) so the HTTPS scheme, host and client address are taken from `X-Forwarded-*`. The sign-in cookie then gets the `Secure` flag and the login lockout counts real client addresses.
 - Every page is sent with a Content-Security-Policy (own scripts and styles plus the Bootstrap CDN only), `X-Frame-Options: DENY` and `Referrer-Policy: same-origin`. Keep the last one: with `no-referrer` browsers send `Origin: null` on POSTs and the cross-origin check rejects the sign-in form.
@@ -279,19 +277,6 @@ Applies **only to files in the RTSP folder**. Uploaded videos and files in a lin
 - Linking a folder: Windows network paths are blocked unless `CCTV_ALLOW_UNC=1`, and a symlink is followed before the check that keeps the app's own `data/` folder from being linked.
 - Uploaded and linked files are opened by ffmpeg with a protocol and container whitelist (plain local files, common video containers), and video responses are served as `video/*` with `nosniff` and a sandbox CSP.
 - Per-user accounts and OpenID Connect are the planned next step (see `ADS-ARCHITECTURE.md`).
-
-## Notebook GPU backend
-
-For stronger models, run inference on a GPU host (for example Kaggle) and select **Notebook GPU** in Settings with the host's base URL.
-
-The remote server must provide:
-
-- `GET /api/capabilities` returning `screening_settings: true`
-- `POST /api/describe` accepting multipart fields `file` and `settings`
-
-The app sends the video with the flag activity, site context, weapon setting and person-label setting. Set the same `CCTV_API_KEY` on both sides. Person labels, the agent and the local YOLO gating do not apply in this mode, and cancelling only stops waiting locally (remote GPU work may continue).
-
-The notebooks (`01_cctv_qwen3_ui.ipynb` for CUDA and `01_cctv_qwen3_ui_tpu_v5e8.ipynb` for the experimental TPU build) are **not part of this repository**. `evaluation.ipynb` is the evaluation notebook.
 
 ## HTTP API
 
@@ -379,7 +364,7 @@ python eval/analyze_app_eval.py --results eval/runs/app_v1/results.jsonl \
 - The queue is single-user and single-machine, with one shared password for access. There are no per-user accounts, and a session cannot be revoked from the server: signing out only removes the browser's cookie, and a copied cookie stays valid until it expires (12 hours of inactivity) or the password changes. Change `CCTV_UI_PASSWORD` and restart to end every session.
 - Nothing reaches the model when person detection finds nobody. An object such as a weapon lying on a table with nobody in view is therefore never checked, and clips without people are deleted after `CCTV_KEEP_EMPTY_MINUTES`.
 - Alert delivery is _at least once_ and bounded by `CCTV_ALERT_RETRY_HOURS`. If a channel stays down longer than that, the alert is dropped; it remains visible on the job in the UI.
-- The model client follows HTTP redirects. Only point notebook mode at endpoints you trust.
+- The model client follows HTTP redirects. Only point it at a server you trust.
 
 ## Troubleshooting
 

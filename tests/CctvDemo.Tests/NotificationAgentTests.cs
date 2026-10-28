@@ -9,8 +9,13 @@ public class AgentPolicyTests
 {
     private static VideoJob Job(string weapon = "no", string? description = "Seseorang memanjat pagar.") => new()
     {
-        Id = "j1", Name = "v.mp4", CameraName = "lobby", Status = "completed",
-        Suspicious = "yes", Weapon = weapon, Description = description
+        Id = "j1",
+        Name = "v.mp4",
+        CameraName = "lobby",
+        Status = "completed",
+        Suspicious = "yes",
+        Weapon = weapon,
+        Description = description
     };
 
     private static AgentContext Ctx(string[]? channels = null, bool more = true, VideoJob? job = null) =>
@@ -205,8 +210,10 @@ public class FlagNotifierTests
             Webhook = new FakeNotifier("webhook", enabled: false);
             var options = new NotificationOptions
             {
-                ThrottleWindow = TimeSpan.Zero, FlushInterval = TimeSpan.FromMilliseconds(20),
-                BackoffBase = TimeSpan.FromMilliseconds(1), MaxAttempts = 1
+                ThrottleWindow = TimeSpan.Zero,
+                FlushInterval = TimeSpan.FromMilliseconds(20),
+                BackoffBase = TimeSpan.FromMilliseconds(1),
+                MaxAttempts = 1
             };
             var notifiers = new INotifier[]
             {
@@ -222,7 +229,9 @@ public class FlagNotifierTests
         public VideoJob Add(string id = "job", string suspicious = "yes", string weapon = "no") =>
             App.Segment("lobby", id + ".mp4", DateTimeOffset.UtcNow, j => j with
             {
-                Suspicious = suspicious, Weapon = weapon, Description = "Seseorang memanjat pagar.",
+                Suspicious = suspicious,
+                Weapon = weapon,
+                Description = "Seseorang memanjat pagar.",
                 Screening = new ScreeningLog { SuspiciousScore = 0.55, SuspiciousThreshold = 0.5 }
             });
 
@@ -266,16 +275,6 @@ public class FlagNotifierTests
         await Wait.Until(() => h.WhatsApp.Sent.Count == 1 && h.Email.Sent.Count == 1);
         Assert.Equal(0, h.Agent.Calls);
         Assert.Null(h.App.Store.Get(job.Id).Screening!.Agent);
-    }
-
-    [Fact]
-    public async Task Notebook_mode_always_uses_the_legacy_dispatcher()
-    {
-        await using var h = new Harness(new FakeAgent(Says("ignore")));
-        var job = h.Add();
-        await Notify(h, job, Local with { Mode = "notebook" });
-        await Wait.Until(() => h.WhatsApp.Sent.Count == 1 && h.Email.Sent.Count == 1);
-        Assert.Equal(0, h.Agent.Calls);
     }
 
     [Fact]
@@ -572,8 +571,14 @@ public class LlmNotificationAgentTests
     {
         var job = new VideoJob
         {
-            Id = "j", Name = "v.mp4", CameraName = "gudang", Suspicious = "yes", Weapon = "no", Description = "d",
-            Timestamps = [1, 2, 3], Screening = new ScreeningLog { SuspiciousScore = 0.52 }
+            Id = "j",
+            Name = "v.mp4",
+            CameraName = "gudang",
+            Suspicious = "yes",
+            Weapon = "no",
+            Description = "d",
+            Timestamps = [1, 2, 3],
+            Screening = new ScreeningLog { SuspiciousScore = 0.52 }
         };
         var f = Facts(Ctx(job, new ModelSettings { SuspiciousThreshold = 0.5 }));
         Assert.Equal(0.52, f.GetProperty("skor_suspicious").GetDouble());

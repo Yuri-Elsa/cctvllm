@@ -73,7 +73,7 @@ function render() {
     $('readyStat').textContent = state.jobs.filter(j => j.status === 'completed').length;
     $('flaggedStat').textContent = state.jobs.filter(isFlagged).length;
     $('runStat').textContent = state.running ? 'Processing' : state.jobs.some(j => j.status === 'queued') ? 'Paused' : 'Idle';
-    $('modelStatus').textContent = state.settings.mode === 'local' ? state.settings.model : 'Notebook GPU';
+    $('modelStatus').textContent = state.settings.model;
     $('start').textContent = state.running ? 'Pause queue' : 'Generate descriptions';
     $('start').disabled = !state.running && !state.jobs.some(j => j.status === 'queued');
     $('queueNote').textContent = state.running ? 'Running. Pause after current video.' : 'One video at a time.';
@@ -172,7 +172,7 @@ $('refreshFolder').onclick = async () => {
     finally { $('refreshFolder').disabled = false }
 };
 $('cameraFilter').onchange = e => { cameraFilter = e.target.value; render() };
-function settingsNote() { const local = $('mode').value === 'local'; $('thresholdNote').textContent = 'Person threshold: YOLO box confidence, or LLM p(yes). Suspicious threshold: flag when p(yes) is at least this value; needs token probabilities from the backend, otherwise the model\'s own yes/no is used. The agent and the LLM detector need Ollama mode. Applies to new runs.'; $('personLabelsLabel').hidden = false; $('modelLabel').style.display = local ? 'block' : 'none'; $('model').required = local; $('settingsNote').textContent = local ? `Custom prompt · ${state.frameLimit} frames · 600 output tokens. Smaller models may produce different results.` : 'Qwen3 notebook backend · 150 frames · Screening settings included.' }
+function settingsNote() { $('thresholdNote').textContent = 'Person threshold: YOLO box confidence, or LLM p(yes). Suspicious threshold: flag when p(yes) is at least this value; needs token probabilities from the backend, otherwise the model\'s own yes/no is used. The agent and the LLM detector need Ollama mode. Applies to new runs.'; $('personLabelsLabel').hidden = false; $('settingsNote').textContent = `Custom prompt · ${state.frameLimit} frames · 600 output tokens. Smaller models may produce different results.` }
 let modelListRequest = 0;
 function setModelOptions(models, current) {
     const choices = [...new Set([...(current ? [current] : []), ...models])];
@@ -183,7 +183,6 @@ function setModelOptions(models, current) {
 $('modelChoices').onchange = e => { if (e.target.name === 'modelChoice') $('model').value = e.target.value };
 async function loadModels() {
     const request = ++modelListRequest;
-    if ($('mode').value !== 'local') return;
     const current = $('model').value || state.settings.model;
     $('refreshModels').disabled = true; $('settingsError').textContent = '';
     try {
@@ -195,7 +194,7 @@ async function loadModels() {
     finally { if (request === modelListRequest) $('refreshModels').disabled = false }
 }
 $('settingsButton').onclick = () => {
-    $('mode').value = state.settings.mode; $('endpoint').value = state.settings.endpoint;
+    $('endpoint').value = state.settings.mode === 'local' ? state.settings.endpoint : 'http://127.0.0.1:11434/v1';   // an old notebook setting falls back to Ollama
     setModelOptions([], state.settings.model); $('personLabels').checked = state.settings.personLabels !== false;
     $('batchProcessing').checked = state.settings.batchProcessing === true;
     $('personDetector').value = state.settings.personDetector || 'yolo';
@@ -211,7 +210,6 @@ $('settingsButton').onclick = () => {
 };
 $('refreshModels').onclick = loadModels;
 $('endpoint').onchange = loadModels;
-$('mode').onchange = () => { modelListRequest++; $('refreshModels').disabled = false; $('endpoint').value = $('mode').value === 'local' ? 'http://127.0.0.1:11434/v1' : ''; settingsNote(); loadModels() };
 $('close').onclick = () => $('settings').close();
 const thresholdValue = id => { const v = parseFloat($(id).value); if (!Number.isFinite(v) || v < 0 || v > 1) throw Error('Thresholds must be numbers between 0 and 1.'); return v };
 $('settingsForm').onsubmit = async e => { e.preventDefault(); try { await api('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: $('mode').value, endpoint: $('endpoint').value, model: $('model').value, personLabels: $('personLabels').checked, batchProcessing: $('batchProcessing').checked, flagActivity: $('flagActivity').value, siteContextEnabled: $('siteContextEnabled').checked, siteContext: $('siteContext').value, weaponEnabled: $('weaponEnabled').checked, personDetector: $('personDetector').value, personThreshold: thresholdValue('personThreshold'), suspiciousThreshold: thresholdValue('suspiciousThreshold'), agentEnabled: $('agentEnabled').checked }) }); $('settings').close(); await refresh(); toast('Settings saved.') } catch (e) { $('settingsError').textContent = e.message } };

@@ -98,7 +98,7 @@ public sealed class NotificationDispatcher : BackgroundService
                 try
                 {
                     // A critical alert is never held back by the per-camera throttle. A weapon flag counts as
-                    // critical even when no agent set an urgency (agent off, notebook mode, no WhatsApp/email).
+                    // critical even when no agent set an urgency (agent off, no WhatsApp/email).
                     if (payload.Kind is AlertKind.CameraOffline or AlertKind.CameraRecovered || IsCritical(payload))
                     {
                         await Deliver(payload, [payload], stoppingToken);
@@ -210,7 +210,10 @@ public sealed class NotificationDispatcher : BackgroundService
 
     private static int Rank(string? urgency) => urgency switch
     {
-        AgentUrgency.Critical => 3, AgentUrgency.High => 2, AgentUrgency.Medium => 1, _ => 0
+        AgentUrgency.Critical => 3,
+        AgentUrgency.High => 2,
+        AgentUrgency.Medium => 1,
+        _ => 0
     };
 
     // The digest speaks for every held alert, so it carries the most serious one (weapon, then urgency,

@@ -49,31 +49,20 @@ public static class HostGuard
     }
 }
 
-// Decides where the app may send video frames, whole videos and CCTV_API_KEY.
-//   local mode:    loopback only.
-//   notebook mode: loopback, or a host listed in CCTV_NOTEBOOK_HOSTS (comma separated), and HTTPS
-//                  unless CCTV_NOTEBOOK_ALLOW_HTTP=1.
+// Decides where the app may send video frames and CCTV_API_KEY: loopback addresses only (the local Ollama server).
 public static class ModelEndpointPolicy
 {
-    public static string? Check(string mode, string? endpoint)
+    public static string? Check(string? endpoint)
     {
         if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") ||
             !string.IsNullOrEmpty(uri.UserInfo))
             return "Enter a valid server URL without embedded credentials.";
-        if (uri.IsLoopback) return null;
-        if (mode != "notebook") return "Local mode requires a localhost address.";
-        var allowed = (Environment.GetEnvironmentVariable("CCTV_NOTEBOOK_HOSTS") ?? "")
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (!allowed.Contains(uri.Host, StringComparer.OrdinalIgnoreCase))
-            return $"Notebook host '{uri.Host}' is not allowed. Add it to CCTV_NOTEBOOK_HOSTS (comma separated) and restart.";
-        if (uri.Scheme != "https" && Environment.GetEnvironmentVariable("CCTV_NOTEBOOK_ALLOW_HTTP") != "1")
-            return "A remote notebook must use https (or set CCTV_NOTEBOOK_ALLOW_HTTP=1 for a trusted LAN).";
-        return null;
+        return uri.IsLoopback ? null : "Local mode requires a localhost address.";
     }
 
     // Called right before anything is sent, so a bad endpoint saved earlier in state.json is refused too.
     public static void Ensure(ModelSettings config)
     {
-        if (Check(config.Mode, config.Endpoint) is { } problem) throw new UserError(problem, 400);
+        if (Check(config.Endpoint) is { } problem) throw new UserError(problem, 400);
     }
 }

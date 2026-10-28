@@ -109,9 +109,7 @@ public sealed class Preflight(QueueStore store, VideoTools videos, RtspIngestSer
     {
         const string name = "Model server";
         var settings = store.Settings;
-        var local = settings.Mode == "local";
-        var label = local ? "Ollama" : "Notebook GPU";
-        var unreachable = local ? "fail" : "warn";
+        const string label = "Ollama";
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(5));
         try
@@ -122,8 +120,7 @@ public sealed class Preflight(QueueStore store, VideoTools videos, RtspIngestSer
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
             using var response = await client.SendAsync(request, timeout.Token);
             if (!response.IsSuccessStatusCode)
-                return new PreflightCheck(name, unreachable, $"{label} at {settings.Endpoint} answered HTTP {(int)response.StatusCode}.");
-            if (!local) return new PreflightCheck(name, "ok", $"{label} reachable at {settings.Endpoint} (model is chosen on the server).");
+                return new PreflightCheck(name, "fail", $"{label} at {settings.Endpoint} answered HTTP {(int)response.StatusCode}.");
 
             using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(timeout.Token));
             var installed = doc.RootElement.GetProperty("data").EnumerateArray()
@@ -136,11 +133,11 @@ public sealed class Preflight(QueueStore store, VideoTools videos, RtspIngestSer
         }
         catch (HttpRequestException)
         {
-            return new PreflightCheck(name, unreachable, $"Cannot reach {label} at {settings.Endpoint}." + (local ? " Start Ollama." : ""));
+            return new PreflightCheck(name, "fail", $"Cannot reach {label} at {settings.Endpoint}." + " Start Ollama.");
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            return new PreflightCheck(name, unreachable, $"{label} at {settings.Endpoint} did not answer within 5 s.");
+            return new PreflightCheck(name, "fail", $"{label} at {settings.Endpoint} did not answer within 5 s.");
         }
         catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException)
         {

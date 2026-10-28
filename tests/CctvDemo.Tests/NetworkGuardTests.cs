@@ -36,38 +36,19 @@ public class HostGuardTests
 public class ModelEndpointPolicyTests
 {
     [Theory]
-    [InlineData("local", "http://127.0.0.1:11434/v1", true)]
-    [InlineData("local", "http://localhost:11434/v1", true)]
-    [InlineData("local", "http://example.com/v1", false)]
-    [InlineData("notebook", "http://127.0.0.1:8000", true)]
-    [InlineData("notebook", "https://169.254.169.254", false)]
-    [InlineData("notebook", "https://user:pw@127.0.0.1", false)]
-    [InlineData("notebook", "ftp://127.0.0.1", false)]
-    public void Without_an_allow_list_only_loopback_is_accepted(string mode, string endpoint, bool ok)
-    {
-        using var env = new EnvScope(("CCTV_NOTEBOOK_HOSTS", null), ("CCTV_NOTEBOOK_ALLOW_HTTP", null));
-        Assert.Equal(ok, ModelEndpointPolicy.Check(mode, endpoint) is null);
-    }
-
-    [Fact]
-    public void A_listed_notebook_host_needs_https_unless_allowed()
-    {
-        using (new EnvScope(("CCTV_NOTEBOOK_HOSTS", "gpu.example.com"), ("CCTV_NOTEBOOK_ALLOW_HTTP", null)))
-        {
-            Assert.Null(ModelEndpointPolicy.Check("notebook", "https://gpu.example.com"));
-            Assert.NotNull(ModelEndpointPolicy.Check("notebook", "http://gpu.example.com"));
-            Assert.NotNull(ModelEndpointPolicy.Check("notebook", "https://other.example.com"));
-            Assert.NotNull(ModelEndpointPolicy.Check("local", "https://gpu.example.com"));
-        }
-        using (new EnvScope(("CCTV_NOTEBOOK_HOSTS", "gpu.example.com"), ("CCTV_NOTEBOOK_ALLOW_HTTP", "1")))
-            Assert.Null(ModelEndpointPolicy.Check("notebook", "http://gpu.example.com"));
-    }
+    [InlineData("http://127.0.0.1:11434/v1", true)]
+    [InlineData("http://localhost:11434/v1", true)]
+    [InlineData("http://example.com/v1", false)]
+    [InlineData("https://169.254.169.254", false)]
+    [InlineData("https://user:pw@127.0.0.1", false)]
+    [InlineData("ftp://127.0.0.1", false)]
+    public void Only_loopback_is_accepted(string endpoint, bool ok) =>
+        Assert.Equal(ok, ModelEndpointPolicy.Check(endpoint) is null);
 
     [Fact]
     public void Ensure_throws_for_a_refused_endpoint()
     {
-        using var env = new EnvScope(("CCTV_NOTEBOOK_HOSTS", null));
-        Assert.Throws<UserError>(() => ModelEndpointPolicy.Ensure(new ModelSettings(Mode: "notebook", Endpoint: "https://evil.example")));
+        Assert.Throws<UserError>(() => ModelEndpointPolicy.Ensure(new ModelSettings(Endpoint: "https://evil.example")));
         ModelEndpointPolicy.Ensure(new ModelSettings());
     }
 }

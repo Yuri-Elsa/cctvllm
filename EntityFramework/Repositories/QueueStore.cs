@@ -24,6 +24,7 @@ public sealed class QueueStore : IQueueRepository
                 var saved = JsonSerializer.Deserialize<StoredState>(File.ReadAllText(statePath), Json)
                     ?? throw new JsonException("state.json is empty.");
                 settings = saved.Settings ?? new ModelSettings();
+                if (settings.Mode != "local") settings = settings with { Mode = "local", Endpoint = new ModelSettings().Endpoint };   // notebook mode was removed
                 linkedFolder = saved.LinkedFolder;
                 items = (saved.Jobs ?? []).Select(j => j.Status == "processing" ? j with { Status = "queued", Stage = "Queued after restart" } : j).ToList();
             }
@@ -162,8 +163,7 @@ public sealed class QueueStore : IQueueRepository
             foreach (var id in doomed)
             {
                 try { var dir = Folder(id); if (Directory.Exists(dir)) Directory.Delete(dir, true); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { } 
-            }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }  
             return (doomed.Count, wanted.Count - doomed.Count);
         }
     }

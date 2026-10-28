@@ -177,9 +177,9 @@ app.MapGet("/api/models", async (string? endpoint, IHttpClientFactory clients, C
     }
 });
 app.MapPost("/api/settings", (ModelSettings value, QueueStore s) => {
-    if (value.Mode is not ("local" or "notebook")) throw new UserError("Choose local model or notebook.");
-    if (ModelEndpointPolicy.Check(value.Mode, value.Endpoint) is { } endpointProblem) throw new UserError(endpointProblem);
-    if (value.Mode == "local" && string.IsNullOrWhiteSpace(value.Model)) throw new UserError("Enter a model name.");
+    if (value.Mode != "local") throw new UserError("Only Ollama (local) is supported.");
+    if (ModelEndpointPolicy.Check(value.Endpoint) is { } endpointProblem) throw new UserError(endpointProblem);
+    if (string.IsNullOrWhiteSpace(value.Model)) throw new UserError("Enter a model name.");
     if (value.PersonDetector is not ("yolo" or "llm")) throw new UserError("Choose YOLO or LLM for person detection.");
     if (!(value.PersonThreshold is >= 0 and <= 1) || !(value.SuspiciousThreshold is >= 0 and <= 1))
         throw new UserError("Thresholds must be between 0 and 1.");

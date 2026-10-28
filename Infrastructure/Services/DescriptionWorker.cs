@@ -43,7 +43,7 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
             try
             {
                 var token = current!.Token;
-                var result = config.Mode == "notebook" ? await Notebook(job, config, token) : await Local(job, config, token);
+                var result = await Local(job, config, token);
                 CommitResult(job.Id, config, result, watch.Elapsed.TotalSeconds, token);
                 var finished = store.Get(job.Id);
                 if (finished.CameraName is not null && finished.SegmentStart is { } start)
@@ -97,7 +97,7 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
                 WeaponEnabled = config.WeaponEnabled,
                 RawText = result.Raw,
                 Timestamps = result.Timestamps,
-                Model = result.ModelName ?? (config.Mode == "local" ? config.Model : "Notebook backend"),
+                Model = result.ModelName ?? config.Model,
                 BackendMode = config.Mode,
                 PersonLabels = config.PersonLabels,
                 Elapsed = Math.Round(elapsedSeconds, 1),
@@ -664,48 +664,6 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
                 choices = new[] { new { message = new { content = contentText }, finish_reason = finish, logprobs = nativeLogprobs } },
                 ollama_response = result.RootElement.Clone()
             }), Encoding.UTF8, "application/json")
-        };
-    }
-    private async Task<DescriptionResult> Notebook(VideoJob job, ModelSettings config, CancellationToken ct)
-    {
-        ModelEndpointPolicy.Ensure(config);
-        store.Update(job.Id, j => j with { Stage = "Processing on notebook GPU" });
-        using var client = Client();
-        await using var file = File.OpenRead(store.VideoPath(job));
-        using var form = new MultipartFormDataContent();
-        using var part = new StreamContent(file);
-        part.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
-        // Require the versioned settings contract before uploading to a notebook.
-        using var capabilitiesResponse = await client.GetAsync(config.Endpoint.TrimEnd('/') + "/api/capabilities", ct);
-        using var capabilities = await ReadResponse(capabilitiesResponse, ct);
-        if (!capabilities.RootElement.TryGetProperty("screening_settings", out var supported) || supported.ValueKind != JsonValueKind.True)
-            throw new UserError("This notebook does not support screening settings. Use the updated Qwen3 UI notebook.", 422);
-        form.Add(part, "file", job.Name);
-        form.Add(new StringContent(JsonSerializer.Serialize(new
-        {
-            flag_activity = config.FlagActivity ?? "",
-            site_context_enabled = config.SiteContextEnabled,
-            site_context = config.SiteContext ?? "",
-            weapon_enabled = config.WeaponEnabled,
-            person_labels = config.PersonLabels,
-            batch_processing = config.BatchProcessing
-        }), Encoding.UTF8, "application/json"), "settings");
-        using var response = await client.PostAsync(config.Endpoint.TrimEnd('/') + "/api/describe", form, ct);
-        using var doc = await ReadResponse(response, ct);
-        var data = doc.RootElement;
-        var stamps = data.TryGetProperty("timestamps", out var ts) ? ts.EnumerateArray().Select(x => x.GetDouble()).ToArray() : [];
-        var parsedResult = ParseResult(data, data.TryGetProperty("raw_text", out var raw) ? raw.GetString() ?? "" : "", stamps, config.WeaponEnabled);
-        double? notebookScore = data.TryGetProperty("suspicious_score", out var scoreValue) && scoreValue.ValueKind == JsonValueKind.Number
-            ? scoreValue.GetDouble() : null;
-        var (decision, used) = Scoring.Decide(parsedResult.Suspicious!, notebookScore, config.SuspiciousThreshold);
-        return parsedResult with
-        {
-            ModelName = data.TryGetProperty("model", out var model) ? model.GetString() : "Notebook backend",
-            Suspicious = decision,
-            ModelSuspicious = parsedResult.Suspicious,
-            SuspiciousScore = used,
-            ScoreSource = used is null ? null : "notebook",
-            Person = new ScreeningLog { PersonDetector = "notebook" }
         };
     }
     private static DescriptionResult ParseResult(JsonElement root, string raw, double[] timestamps, bool weaponEnabled = true)

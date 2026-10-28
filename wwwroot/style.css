@@ -1422,3 +1422,536 @@ dialog .toggle-label input {
     font-size: 11px;
     color: var(--muted)
 }
+
+/* Sign out button (was reusing .nav-item, so it rendered at 16px and looked oversized) */
+.sidebar-bottom form {
+    margin-top: 12px
+}
+
+.signout-btn {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: #fff;
+    color: #637584;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s,color .15s,border-color .15s
+}
+
+    .signout-btn:hover {
+        background: #fff3f4;
+        color: #a61624;
+        border-color: #f3c3c8
+    }
+
+/* Queue polish: checkbox, checked row, danger hover on delete actions */
+.queue-item input[type="checkbox"] {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    accent-color: var(--blue);
+    cursor: pointer
+}
+
+.queue-item:has(input[type="checkbox"]:checked) {
+    background: #f6fafe;
+    border-color: #9cc3e0
+}
+
+.remove:hover {
+    color: var(--red)
+}
+
+#deleteSelected:not(:disabled):hover, #deleteAll:not(:disabled):hover {
+    background: #fff3f4;
+    color: #a61624;
+    border-color: #f3c3c8
+}
+
+#deleteSelected:disabled {
+    opacity: .5;
+    cursor: not-allowed
+}
+
+/* ===== Visual polish (appended; overrides earlier rules) ===== */
+:root {
+    --shadow-sm: 0 1px 2px #1f5a8910, 0 4px 14px #1f5a8912;
+    --shadow-md: 0 2px 4px #1f5a8914, 0 10px 28px #1f5a891f
+}
+
+body {
+    background: radial-gradient(900px 520px at 88% -10%,#d6eafa 0%,transparent 62%), radial-gradient(760px 520px at -6% 108%,#e8f2c8 0%,transparent 58%), #f2f6f9;
+    background-attachment: fixed
+}
+
+.app-shell {
+    border-color: #fff;
+    box-shadow: 0 24px 64px #1f5a8916;
+    background: linear-gradient(130deg,#e6f1fa 0%,#eef2f5 48%,#eaf0f3 100%)
+}
+
+/* sidebar */
+.brand-icon {
+    background: linear-gradient(135deg,#35a0e8,var(--blue) 55%,var(--deep));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    filter: drop-shadow(0 3px 6px #106db635)
+}
+
+.nav-item {
+    font-variant-emoji: text;
+    transition: background .15s,color .15s,transform .15s,box-shadow .15s
+}
+
+    .nav-item:hover {
+        color: var(--deep);
+        transform: translateX(2px)
+    }
+
+    .nav-item.active {
+        position: relative;
+        box-shadow: var(--shadow-sm)
+    }
+
+        .nav-item.active::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 12px;
+            bottom: 12px;
+            width: 3px;
+            border-radius: 0 3px 3px 0;
+            background: var(--blue)
+        }
+
+/* header */
+h1 {
+    background: linear-gradient(90deg,var(--ink) 35%,var(--deep));
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent
+}
+
+#modelStatus {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    font-weight: 600;
+    box-shadow: var(--shadow-sm)
+}
+
+    #modelStatus::before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        margin-right: 8px;
+        background: var(--green);
+        box-shadow: 0 0 0 3px #abc43733
+    }
+
+    #modelStatus:empty::before {
+        display: none
+    }
+
+/* summary cards */
+.summary-strip {
+    background: #ffffffe8;
+    padding: 22px 4px;
+    box-shadow: var(--shadow-sm)
+}
+
+    .summary-strip > * {
+        --c: var(--blue)
+    }
+
+    .summary-strip > :nth-child(2) {
+        --c: var(--green)
+    }
+
+    .summary-strip > :nth-child(3) {
+        --c: var(--red)
+    }
+
+    .summary-strip > *::before {
+        content: "";
+        display: block;
+        width: 28px;
+        height: 4px;
+        border-radius: 3px;
+        margin-bottom: 14px;
+        background: var(--c)
+    }
+
+    .summary-strip strong {
+        font-size: 30px
+    }
+
+/* buttons */
+button {
+    box-shadow: 0 1px 2px #1f5a8908
+}
+
+    button:hover:not(:disabled) {
+        box-shadow: 0 3px 10px #1f5a8916
+    }
+
+#dropzone {
+    transition: background .15s,border-color .15s,box-shadow .15s
+}
+
+    #dropzone:hover {
+        background: #f0f6fc;
+        border-color: #b7d5eb;
+        box-shadow: 0 3px 10px #1f5a8916
+    }
+
+.primary {
+    background: linear-gradient(135deg,#1a82d4,var(--blue) 55%,var(--deep));
+    box-shadow: 0 4px 12px #106db633;
+    transition: transform .15s,box-shadow .15s,background .15s
+}
+
+    .primary:hover:not(:disabled) {
+        background: linear-gradient(135deg,var(--blue),var(--deep));
+        transform: translateY(-1px);
+        box-shadow: 0 6px 16px #106db644
+    }
+
+/* video list + review */
+.queue-item {
+    box-shadow: 0 1px 2px #1f5a8908;
+    transition: background .15s,border-color .15s,box-shadow .15s,transform .15s
+}
+
+    .queue-item:hover {
+        box-shadow: var(--shadow-sm);
+        transform: translateY(-1px)
+    }
+
+    .queue-item img {
+        box-shadow: 0 1px 4px #0002
+    }
+
+.video-wrap, .result {
+    box-shadow: var(--shadow-sm)
+}
+
+.result {
+    background: #fff
+}
+
+.placeholder {
+    align-content: center;
+    gap: 12px;
+    color: #7c93a4
+}
+
+    .placeholder::before {
+        content: "\25B6";
+        font-variant-emoji: text;
+        display: grid;
+        place-items: center;
+        justify-self: center;
+        width: 54px;
+        height: 54px;
+        padding-left: 3px;
+        border-radius: 50%;
+        background: #fff;
+        color: var(--blue);
+        font-size: 18px;
+        box-shadow: var(--shadow-sm)
+    }
+
+@media (prefers-reduced-motion: reduce) {
+    .nav-item:hover, .queue-item:hover, .primary:hover:not(:disabled) {
+        transform: none
+    }
+}
+
+/* ===== Visual polish v2 (dark sidebar, metric cards, glass toolbar) ===== */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: #b9cbd8 transparent
+}
+
+::selection {
+    background: #bfe0f7
+}
+
+.app-shell {
+    background: radial-gradient(circle,#1f5a8918 1px,transparent 1.4px) 0 0/24px 24px, linear-gradient(130deg,#e6f1fa 0%,#eef2f5 48%,#eaf0f3 100%)
+}
+
+/* dark sidebar */
+.sidebar {
+    background: linear-gradient(180deg,#0e3556 0%,#114a78 55%,#0f5e9e 100%);
+    color: #cfe3f3
+}
+
+.brand {
+    color: #fff
+}
+
+    .brand small {
+        color: #9fc4e2
+    }
+
+.brand-icon {
+    background: linear-gradient(135deg,#7cc4ff,#fff);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    filter: drop-shadow(0 2px 8px #7cc4ff66)
+}
+
+.nav-caption {
+    color: #7fa9cb
+}
+
+.nav-item {
+    color: #bcd6ea
+}
+
+    .nav-item:hover {
+        background: #ffffff1a;
+        color: #fff
+    }
+
+    .nav-item.active {
+        background: #ffffff24;
+        color: #fff;
+        box-shadow: inset 0 0 0 1px #ffffff1f
+    }
+
+        .nav-item.active::before {
+            background: #7cc4ff
+        }
+
+.sidebar-bottom {
+    color: #9fc4e2
+}
+
+.signout-btn {
+    background: #ffffff14;
+    border-color: #ffffff2e;
+    color: #e6f1fa
+}
+
+    .signout-btn:hover {
+        background: #ec1e3233;
+        border-color: #ec1e3280;
+        color: #fff
+    }
+
+/* header: pulsing dot on the eyebrow */
+.eyebrow {
+    display: flex;
+    align-items: center;
+    gap: 8px
+}
+
+    .eyebrow::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--blue);
+        animation: eyebrow-pulse 2s infinite
+    }
+
+@keyframes eyebrow-pulse {
+    0% {
+        box-shadow: 0 0 0 0 #106db666
+    }
+
+    70%, 100% {
+        box-shadow: 0 0 0 9px #106db600
+    }
+}
+
+/* metric cards (each metric is its own card with an icon chip) */
+.summary-strip {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    padding: 0;
+    gap: 16px
+}
+
+    .summary-strip > div, .summary-strip > #showFlagged, .summary-strip > div:last-child {
+        position: relative;
+        overflow: hidden;
+        padding: 20px 22px;
+        border: 1px solid #fff;
+        border-radius: 16px;
+        background: #fff;
+        box-shadow: var(--shadow-sm);
+        text-align: left;
+        transition: transform .15s,box-shadow .15s,background .15s
+    }
+
+        .summary-strip > #showFlagged:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+            background: #fff6f7
+        }
+
+        .summary-strip > #showFlagged[aria-pressed=true] {
+            background: #ffedf0;
+            box-shadow: 0 0 0 2px #ec1e3240,var(--shadow-sm)
+        }
+
+    .summary-strip > *::after {
+        position: absolute;
+        top: 18px;
+        right: 18px;
+        width: 36px;
+        height: 36px;
+        display: grid;
+        place-items: center;
+        border-radius: 12px;
+        font-size: 16px;
+        font-variant-emoji: text;
+        color: var(--c);
+        background: color-mix(in srgb,var(--c) 14%,#fff)
+    }
+
+    .summary-strip > :nth-child(1)::after {
+        content: "\25A3"
+    }
+
+    .summary-strip > :nth-child(2)::after {
+        content: "\2713"
+    }
+
+    .summary-strip > :nth-child(3)::after {
+        content: "\2691"
+    }
+
+    .summary-strip > :nth-child(4)::after {
+        content: "\25D4"
+    }
+
+/* glass toolbar */
+.toolbar {
+    padding: 14px 16px;
+    background: #ffffffb3;
+    border: 1px solid #fff;
+    border-radius: 16px;
+    box-shadow: var(--shadow-sm);
+    backdrop-filter: blur(6px)
+}
+
+/* section headings get a brand accent bar */
+.heading h2 {
+    display: flex;
+    align-items: center
+}
+
+    .heading h2::before {
+        content: "";
+        width: 4px;
+        height: 18px;
+        border-radius: 2px;
+        margin-right: 10px;
+        background: linear-gradient(var(--blue),var(--green))
+    }
+
+/* description card: brand stripe on top */
+.result {
+    position: relative;
+    overflow: hidden
+}
+
+    .result::before {
+        content: "";
+        position: absolute;
+        inset: 0 0 auto;
+        height: 4px;
+        background: linear-gradient(90deg,var(--blue) 0 55%,var(--green) 55% 82%,var(--red) 82%)
+    }
+
+/* selected video keeps its accent bar and gets a soft ring (also on hover) */
+.queue-item.selected, .queue-item.selected:hover {
+    box-shadow: 0 0 0 3px #106db61f, inset 3px 0 var(--blue)
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .eyebrow::before {
+        animation: none
+    }
+
+    .summary-strip > #showFlagged:hover {
+        transform: none
+    }
+}
+
+/* ===== v3: Inter (self-hosted, CSP-safe) + floating sidebar ===== */
+@font-face {
+    font-family: "Inter";
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+    src: url("/fonts/inter-latin-ext-wght-normal.woff2") format("woff2");
+    unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF
+}
+
+@font-face {
+    font-family: "Inter";
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+    src: url("/fonts/inter-latin-wght-normal.woff2") format("woff2");
+    unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD
+}
+
+:root {
+    font-family: "Inter","Segoe UI",Arial,sans-serif;
+    -webkit-font-smoothing: antialiased
+}
+
+/* sidebar: floating rounded panel, so it never leaves an odd gap when the page scrolls */
+.app-shell {
+    grid-template-columns: 211px minmax(0,1fr)
+}
+
+.sidebar {
+    margin: 16px 0 16px 16px;
+    top: 16px;
+    height: calc(100vh - 56px);
+    border-radius: 20px;
+    box-shadow: 0 12px 32px #0e355633
+}
+
+@media(max-width:1100px) {
+    .app-shell {
+        grid-template-columns: 176px minmax(0,1fr)
+    }
+
+    .sidebar {
+        margin: 12px 0 12px 12px;
+        top: 12px;
+        height: calc(100vh - 24px);
+        border-radius: 16px
+    }
+}
+
+@media(max-width:650px) {
+    .app-shell {
+        display: block
+    }
+
+    .sidebar {
+        margin: 0;
+        top: auto;
+        height: auto;
+        border-radius: 0;
+        box-shadow: none
+    }
+}

@@ -46,12 +46,20 @@ function syncCameraFilter() {
     $('cameraFilter').hidden = !names.length;
 }
 const CAMERA_STATE = { running: 'Running', retrying: 'Retrying', starting: 'Starting' };
+// Live mode only: what the detector sees on this camera right now.
+function liveLine(c) {
+    if (c.mode !== 'live' || c.state !== 'running') return '';
+    const people = Number(c.people) || 0;
+    const now = people > 0 ? `${people} ${people === 1 ? 'person' : 'people'} in view${c.recording ? ' · recording' : ''}` : 'Nobody in view';
+    const seen = c.lastPersonAt ? ` · last seen ${ago(c.lastPersonAt)}` : '';
+    return `<p class="camera-live${people > 0 ? ' active' : ''}">${escapeHtml(now + seen)}</p>`;
+}
 function renderCameras() {
     $('cameraPanel').hidden = !cameras.length;
     if (!cameras.length) return;
     const running = cameras.filter(c => c.state === 'running').length;
     $('cameraSummary').textContent = `${running} of ${cameras.length} running`;
-    const html = cameras.map(c => `<div class="camera-card ${escapeHtml(c.state)}"><div class="camera-card-head"><strong>${escapeHtml(c.camera)}</strong><span class="camera-state ${escapeHtml(c.state)}">${escapeHtml(CAMERA_STATE[c.state] ?? c.state)}</span></div><dl><div><dt>Last data</dt><dd${c.lastDataAt ? ` title="${escapeHtml(new Date(c.lastDataAt).toLocaleString())}"` : ''}>${escapeHtml(ago(c.lastDataAt))}</dd></div><div><dt>Restarts</dt><dd>${Number(c.restarts) || 0}</dd></div></dl>${c.lastError ? `<p class="camera-error" title="${escapeHtml(c.lastError)}">${escapeHtml(c.lastError)}</p>` : ''}</div>`).join('');
+    const html = cameras.map(c => `<div class="camera-card ${escapeHtml(c.state)}"><div class="camera-card-head"><strong>${escapeHtml(c.camera)}</strong><span class="camera-state ${escapeHtml(c.state)}">${escapeHtml(CAMERA_STATE[c.state] ?? c.state)}</span></div><dl><div><dt>Last data</dt><dd${c.lastDataAt ? ` title="${escapeHtml(new Date(c.lastDataAt).toLocaleString())}"` : ''}>${escapeHtml(ago(c.lastDataAt))}</dd></div><div><dt>Restarts</dt><dd>${Number(c.restarts) || 0}</dd></div></dl>${liveLine(c)}${c.lastError ? `<p class="camera-error" title="${escapeHtml(c.lastError)}">${escapeHtml(c.lastError)}</p>` : ''}</div>`).join('');
     if (html !== cameraPanelHtml) { cameraPanelHtml = html; $('cameraList').innerHTML = html }
 }
 function setQueueFilter(filter) {

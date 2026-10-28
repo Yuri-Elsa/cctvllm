@@ -1422,3 +1422,14 @@ dialog .toggle-label input {
     font-size: 11px;
     color: var(--muted)
 }
+
+.camera-live {
+    margin: 0.5rem 0 0;
+    font-size: 0.85rem;
+    opacity: 0.8;
+}
+    .camera-live.active {
+        color: #d97706;
+        font-weight: 600;
+        opacity: 1;
+    }

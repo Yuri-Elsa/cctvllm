@@ -233,6 +233,60 @@ set CCTV_RTSP_SEGMENT_SECONDS=20
 - FFmpeg is restarted if it reports no progress for the stall time. Stream URLs (which may contain passwords) come only from the environment and are removed from logs, errors and API output.
 - **Camera watchdog:** a camera with no data for `CCTV_CAMERA_OFFLINE_SECONDS` sends an _offline_ alert, repeats a reminder every `CCTV_CAMERA_REMINDER_MINUTES`, and sends a _back online_ alert when data resumes.
 
+### Live mode (event clips)
+
+By default each camera is cut into fixed segments (`CCTV_RTSP_SEGMENT_SECONDS`) and every segment is checked
+afterwards. **Live mode** looks at the stream all the time instead and only saves a clip while a person is in view:
+
+```
+camera stream -> live_watch.py: person detector (2x per second) + the last few seconds in memory
+                      | a person is confirmed (2 detections in a row)
+                      v
+        clip = pre-roll + while the person is there + post-roll   ->  <rtsp dir>/<camera>/<yyyyMMdd_HHmmss>.mp4
+                      |  (renamed into place only when complete)
+                      v
+        the usual pipeline: import -> person tracking -> model -> flags -> agent -> notifications
+```
+
+Turn it on with `set CCTV_LIVE=1` next to the camera settings. The Cameras panel then shows, per camera, how many people
+the detector sees right now ("2 people in view · recording") and when someone was last seen. That is the instant part:
+it updates within about a second. The description itself still takes as long as the model needs, so a clip is
+described roughly _clip length + model time_ after the person appeared. Because a long visit is cut every
+`CCTV_LIVE_MAX_CLIP` seconds, the first part is described while the person is still there.
+
+| Variable                      | Default | Meaning                                                                                   |
+| ----------------------------- | ------- | ----------------------------------------------------------------------------------------- |
+| `CCTV_LIVE`                   | off     | `1` turns live mode on for every camera in `CCTV_CAMERAS`                                  |
+| `CCTV_LIVE_PREROLL`           | `5`     | Seconds from _before_ the first detection that go into a clip (0-30)                       |
+| `CCTV_LIVE_POSTROLL`          | `4`     | Seconds without a person before a clip ends (1-60)                                         |
+| `CCTV_LIVE_MAX_CLIP`          | `20`    | A clip is closed after this long while someone is in view, and the next one begins (5-300) |
+| `CCTV_LIVE_CONFIRM`           | `2`     | Detections in a row that count as a person. Raise it if shadows or reflections trigger clips |
+| `CCTV_LIVE_FPS`               | `6`     | Frames per second saved in the clips (2-15)                                                |
+| `CCTV_LIVE_SIZE`              | `960`   | Longest side of the saved picture, in pixels (320-1920). Smaller means less CPU and disk   |
+
+What to know:
+
+- The person threshold is the one in Model settings (`PersonThreshold`), read when a camera's watcher starts.
+- Clips are re-encoded to H.264 (so the browser can play them), which needs an ffmpeg **with libx264**. The standard Windows builds have it. Segment mode copies the stream and needs no encoder.
+- It needs the same Python environment as person tracking (`CCTV_YOLO_PYTHON`), and it runs one YOLO process per camera, so expect about one CPU core and 300-500 MB of memory per camera.
+- Retention, flags, review and export work exactly as for segments: a live clip is a normal file in the camera folder. Nobody in view means no file at all.
+- The decision logic (when a clip starts, rolls over and ends) is plain Python in `tracking/live_logic.py` with its tests in `tracking/test_live_logic.py`: run `python -m unittest` inside the `tracking` folder.
+- The camera address is passed to the watcher through its environment, not its command line.
+- If the watcher dies or the stream drops, the app restarts it with the same back-off as for segments, and the clip in progress is closed first when the stream ends normally. A clip that was open when the process was killed is lost.
+- Loading the detector can take a while on a slow machine; the app waits up to two minutes for the first sign of life.
+- Everything stays on this machine: the stream is read here, the detector runs here, the clips are written to the RTSP folder, and the model (Ollama) is only ever reached on a localhost address, so nothing leaves the machine.
+
+**Trying it without a camera.** The watcher also accepts a video file and plays it back in real time:
+
+```bash
+set LIVE_RTSP_URL=D:\test-cctv\some-video.mp4
+.venv\Scripts\python tracking\live_watch.py --camera test --out data\rtsp\test --weights tracking\yolov8n.pt --ffmpeg ffmpeg
+```
+
+It prints its events as JSON lines and writes the clips into `--out`. To test the whole app with a camera-like stream,
+a small RTSP server such as MediaMTX and `ffmpeg -re -stream_loop -1 -i video.mp4 -c copy -f rtsp rtsp://localhost:8554/test`
+give you an `rtsp://` address to put in `CCTV_RTSP_<NAME>`.
+
 ## Notifications
 
 Channels are `log` (always on), `webhook`, `email` and `whatsapp`. A channel is active only when its variables are set.

@@ -13,6 +13,9 @@ public sealed class ScanCoordinator
 		try { wake.Release(); } catch (SemaphoreFullException) { } 
 	}
 
+	// Wakes the watcher for a poll without asking for a linked-folder scan (a new live clip is waiting in the RTSP folder).
+	public void Wake() { try { wake.Release(); } catch (SemaphoreFullException) { } }
+
 	public bool TryTake() { lock (gate) { var was = pending; pending = false; return was; } }
 	public Task<bool> WaitAsync(TimeSpan timeout, CancellationToken ct) => wake.WaitAsync(timeout, ct);
 	public void Begin() { lock (gate) scanning = true; }

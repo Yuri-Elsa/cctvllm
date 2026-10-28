@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 
@@ -8,7 +9,7 @@ using Microsoft.Extensions.Options;
 // It does not touch the queue: FolderWatcherService watches OutputRoot and imports finished
 // segments, and the camera name comes from the sub-folder, exactly as for a linked folder.
 public sealed partial class RtspIngestService(QueueStore store, VideoTools videos, IOptions<RtspOptions> options,
-    ILogger<RtspIngestService> logger) : BackgroundService
+    ILogger<RtspIngestService> logger, IWebHostEnvironment? env = null, ScanCoordinator? scans = null) : BackgroundService
 {
     private readonly ConcurrentDictionary<string, CameraStatus> status = new();
     private readonly Lazy<IReadOnlyList<RtspCamera>> cameras =
@@ -40,6 +41,7 @@ public sealed partial class RtspIngestService(QueueStore store, VideoTools video
     // every OS, unlike judging by file size, which can stay the same between ffmpeg's buffered writes.
     public bool IsBeingWritten(string path)
     {
+        if (options.Value.Live) return false;   // live clips are renamed into place only once they are complete
         try
         {
             var dir = Path.GetDirectoryName(path);
@@ -60,8 +62,12 @@ public sealed partial class RtspIngestService(QueueStore store, VideoTools video
             return;
         }
         Directory.CreateDirectory(OutputRoot);
-        logger.LogInformation("RTSP ingest on: {Count} camera(s), {Seconds}s segments, output {Dir}.",
-            cameras.Value.Count, options.Value.SegmentSeconds, OutputRoot);
+        if (options.Value.Live)
+            logger.LogInformation("RTSP ingest on in LIVE mode: {Count} camera(s), a clip is saved while a person is in view, output {Dir}.",
+                cameras.Value.Count, OutputRoot);
+        else
+            logger.LogInformation("RTSP ingest on: {Count} camera(s), {Seconds}s segments, output {Dir}.",
+                cameras.Value.Count, options.Value.SegmentSeconds, OutputRoot);
         await Task.WhenAll(cameras.Value.Select(camera => RunCamera(camera, stoppingToken)));
     }
 
@@ -80,7 +86,7 @@ public sealed partial class RtspIngestService(QueueStore store, VideoTools video
             catch (Exception ex) { reason = ex is UserError ? ex.Message : ex.GetType().Name; }
 
             logger.LogWarning("Camera {Camera} stopped: {Reason}. Retrying in {Seconds}s.", camera.Name, reason, delay.TotalSeconds);
-            Update(camera.Name, s => s with { State = "retrying", Restarts = s.Restarts + 1, LastError = reason });
+            Update(camera.Name, s => s with { State = "retrying", Restarts = s.Restarts + 1, LastError = reason, People = null, Recording = false });
             try { await Task.Delay(delay, ct); }
             catch (OperationCanceledException) { break; }
             // A stream that stayed up for a while starts over at a short delay; a failing one backs off to 60 s.
@@ -92,6 +98,7 @@ public sealed partial class RtspIngestService(QueueStore store, VideoTools video
     // Runs ffmpeg until it exits or stalls. Returns why it stopped.
     private async Task<string?> RunOnce(RtspCamera camera, string dir, CancellationToken ct)
     {
+        if (options.Value.Live) return await RunLive(camera, dir, ct);
         var started = DateTime.UtcNow;
         long lastProgress = started.Ticks;
         var errors = new ConcurrentQueue<string>();
@@ -146,6 +153,129 @@ public sealed partial class RtspIngestService(QueueStore store, VideoTools video
         return $"ffmpeg exited with code {process.ExitCode}" + (detail.Length > 0 ? $": {detail}" : "");
     }
 
+    // Live mode: runs tracking/live_watch.py for this camera until it exits or goes quiet, and returns why it stopped.
+    // The script reads the stream itself, so ffmpeg is not started here; the same restart / back-off loop applies.
+    private async Task<string?> RunLive(RtspCamera camera, string dir, CancellationToken ct)
+    {
+        var root = env?.ContentRootPath ?? Directory.GetCurrentDirectory();
+        var python = PersonTracking.PythonPath(root);
+        var weights = PersonTracking.WeightsPath(root);
+        var script = Path.Combine(root, "tracking/live_watch.py");
+        if (!File.Exists(python) || !File.Exists(weights) || !File.Exists(script))
+            throw new UserError("Live mode needs the YOLO tracking setup: the Python environment, tracking/yolov8n.pt and tracking/live_watch.py.", 503);
+
+        var live = options.Value;
+        var started = DateTime.UtcNow;
+        long lastProgress = started.Ticks;
+        var heartbeats = 0;
+        var errors = new ConcurrentQueue<string>();
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo(python)
+            {
+                UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
+                CreateNoWindow = true, WorkingDirectory = root
+            }
+        };
+        string[] args =
+        [
+            script, "--camera", camera.Name, "--out", dir, "--ffmpeg", videos.FfmpegPath, "--weights", weights,
+            "--conf", store.Settings.PersonThreshold.ToString("0.###", CultureInfo.InvariantCulture),
+            "--fps", live.LiveFps.ToString(CultureInfo.InvariantCulture),
+            "--preroll", live.LivePreRoll.ToString(CultureInfo.InvariantCulture),
+            "--postroll", live.LivePostRoll.ToString(CultureInfo.InvariantCulture),
+            "--max-clip", live.LiveMaxClip.ToString(CultureInfo.InvariantCulture),
+            "--max-side", live.LiveSize.ToString(CultureInfo.InvariantCulture),
+            "--confirm", live.LiveConfirm.ToString(CultureInfo.InvariantCulture)
+        ];
+        foreach (var arg in args) process.StartInfo.ArgumentList.Add(arg);
+        ChildProcess.ScrubSecrets(process.StartInfo);
+        process.StartInfo.Environment["OMP_NUM_THREADS"] = "2";
+        // The stream address holds the camera password. It goes into this child's environment, not onto its
+        // command line, where any other user of the machine could read it.
+        process.StartInfo.Environment["LIVE_RTSP_URL"] = camera.Url;
+
+        process.OutputDataReceived += (_, e) =>
+        {
+            if (ParseLiveLine(e.Data) is not { } line) return;
+            Interlocked.Exchange(ref lastProgress, DateTime.UtcNow.Ticks);
+            var now = DateTimeOffset.UtcNow;
+            switch (line.Kind)
+            {
+                case "hb":
+                    Interlocked.Increment(ref heartbeats);
+                    Update(camera.Name, s => s with { State = "running", LastDataAt = now, LastError = null, People = line.People, Recording = line.Recording });
+                    break;
+                case "person":
+                    Update(camera.Name, s => s with { People = line.People, LastPersonAt = now, Recording = true });
+                    logger.LogInformation("Camera {Camera}: {People} person(s) detected, recording a clip.", camera.Name, line.People);
+                    break;
+                case "clip":
+                    logger.LogInformation("Camera {Camera}: clip {File} saved ({Seconds:0} s).", camera.Name, line.File, line.Seconds);
+                    scans?.Wake();   // import it now instead of at the next poll
+                    break;
+                case "error":
+                    logger.LogWarning("Camera {Camera}: the live watcher reported a problem with a clip.", camera.Name);
+                    break;
+            }
+        };
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (string.IsNullOrWhiteSpace(e.Data)) return;
+            errors.Enqueue(Redact(e.Data, camera.Url));
+            while (errors.Count > 3) errors.TryDequeue(out var dropped);
+        };
+        try { process.Start(); }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or FileNotFoundException)
+        { throw new UserError("The Python environment for live mode could not be started. Check CCTV_YOLO_PYTHON.", 503); }
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+        var exited = process.WaitForExitAsync(CancellationToken.None);
+
+        var stalled = false;
+        try
+        {
+            while (true)
+            {
+                var finished = await Task.WhenAny(exited, Task.Delay(TimeSpan.FromSeconds(2), ct));
+                ct.ThrowIfCancellationRequested();
+                if (finished == exited) break;
+                var last = new DateTime(Interlocked.Read(ref lastProgress), DateTimeKind.Utc);
+                // Loading the detector can take a while on a slow machine, so until the first heartbeat the limit is longer.
+                var limit = Volatile.Read(ref heartbeats) > 0 ? live.LiveStallAfter : TimeSpan.FromSeconds(Math.Max(120, live.LiveStallAfter.TotalSeconds));
+                if (DateTime.UtcNow - last > limit) { stalled = true; break; }
+            }
+        }
+        finally
+        {
+            if (!process.HasExited) { try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { } }
+            await exited;
+        }
+        if (stalled) return "the live watcher stopped reporting";
+        var detail = string.Join(" | ", errors);
+        return $"the live watcher exited with code {process.ExitCode}" + (detail.Length > 0 ? $": {detail}" : "");
+    }
+
+    internal readonly record struct LiveEvent(string Kind, int People, bool Recording, string? File, double Seconds);
+
+    // One line of the watcher's stdout. Anything that is not one of its JSON events (a library warning, say) is ignored.
+    internal static LiveEvent? ParseLiveLine(string? line)
+    {
+        if (string.IsNullOrWhiteSpace(line) || line[0] != '{') return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(line);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("event", out var kind) || kind.ValueKind != JsonValueKind.String) return null;
+            return new LiveEvent(kind.GetString()!,
+                root.TryGetProperty("people", out var people) && people.ValueKind == JsonValueKind.Number ? people.GetInt32() : 0,
+                root.TryGetProperty("recording", out var recording) && recording.ValueKind == JsonValueKind.True,
+                root.TryGetProperty("file", out var file) && file.ValueKind == JsonValueKind.String ? file.GetString() : null,
+                root.TryGetProperty("seconds", out var seconds) && seconds.ValueKind == JsonValueKind.Number ? seconds.GetDouble() : 0);
+        }
+        catch (JsonException) { return null; }
+    }
+
     // -c:v copy: no re-encoding, so the CPU stays free for the model. -an: camera audio such as
     // G.711 often cannot go into mp4, and the system does not use it.
     private string[] Args(RtspCamera camera, string dir) =>
@@ -161,7 +291,7 @@ public sealed partial class RtspIngestService(QueueStore store, VideoTools video
 
     private void Update(string camera, Func<CameraStatus, CameraStatus> change) =>
         status.AddOrUpdate(camera,
-            _ => change(new CameraStatus(camera, "starting", null, 0, null)),
+            _ => change(new CameraStatus(camera, "starting", null, 0, null, Mode: options.Value.Live ? "live" : "segments")),
             (_, current) => change(current));
 
     // ffmpeg may echo the URL (with its password) in an error message. Remove it before it is stored or logged.

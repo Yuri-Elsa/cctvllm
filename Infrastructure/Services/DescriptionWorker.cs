@@ -246,6 +246,10 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
         var batches = new List<DescriptionResult>();
         DescriptionResult? summary = null;
         var processed = 0;
+        // Single-frame requests are the safe default. Larger groups can be enabled from the UI when testing on
+        // hardware with more memory. When a group does not fit the context it is split, and the rest of this
+        // video then uses the smaller size instead of failing and splitting again on every batch.
+        var batchSize = config.BatchProcessing ? 10 : 1;
         async Task Process(int offset, int count)
         {
             ct.ThrowIfCancellationRequested();
@@ -279,15 +283,19 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
                  ex.Message.Contains("context size", StringComparison.OrdinalIgnoreCase)))
             {
                 var half = count / 2;
+                batchSize = Math.Min(batchSize, half);
+                logger.LogWarning("{Count} frames of {Video} did not fit the model's context; using {Size} per request from here on", count, job.Name, batchSize);
                 await Process(offset, half);
                 await Process(offset + half, count - half);
             }
         }
-        // Single-frame requests are the safe default. Larger groups can be enabled from the
-        // UI when testing on hardware with more memory; context errors still split safely.
-        var batchSize = config.BatchProcessing ? 10 : 1;
-        for (var offset = 0; offset < paths.Length; offset += batchSize)
-            await Process(offset, Math.Min(batchSize, paths.Length - offset));
+        // Advance by the size that was actually requested: batchSize may shrink while a batch is being split.
+        for (var offset = 0; offset < paths.Length;)
+        {
+            var count = Math.Min(batchSize, paths.Length - offset);
+            await Process(offset, count);
+            offset += count;
+        }
         if (summary is null || processed != paths.Length) throw new UserError("Not all selected frames were described.", 502);
         var raw = JsonSerializer.Serialize(new
         {
@@ -353,6 +361,7 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
             "Sekarang jawab berdasarkan gambar-gambar di atas dengan mengikuti instruksi pada pesan sebelumnya."
         });
         using var client = Client();
+        var maxTokens = 600; var seed = 7;
         object Request(bool scores) => new
         {
             model = config.Model,
@@ -392,17 +401,49 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
             // likely continuation it stays the most likely continuation forever. A little
             // temperature plus frequency/presence penalties breaks that cycle; the fixed
             // seed keeps runs reproducible despite the non-zero temperature.
-            max_tokens = 600,
+            max_tokens = maxTokens,
             temperature = 0.35,
             top_p = 0.9,
             frequency_penalty = 0.7,
             presence_penalty = 0.3,
-            seed = 7,
+            seed = seed,
             reasoning_effort = "none",
             logprobs = scores,
             top_logprobs = scores ? Scoring.TopLogprobs : 0
         };
-        using var doc = await ModelCalls.Ask(client, config, Request, true, ct);
+        // A small model sometimes keeps writing until the token limit (it loops on one sentence). The fixed seed
+        // makes a plain retry repeat exactly that, so the one extra try uses another seed and more room. If that
+        // is cut off too, the video still fails below: nothing is guessed from a half-finished answer.
+        async Task<JsonDocument> AskModel()
+        {
+            var first = await ModelCalls.Ask(client, config, Request, true, ct);
+            if (!HitOutputLimit(first)) return first;
+
+            // Case 1: the context window filled up (the answer stopped after a few dozen tokens). A higher token
+            // limit cannot help; the window has to be bigger. Only Ollama's native API reports this and takes num_ctx.
+            if (ContextFull(first, maxTokens))
+            {
+                // A batch of several frames is not given a bigger window: the error below makes DescribeBatches split
+                // it in half, which needs no extra memory and no model reload. Only a single frame gets a larger one.
+                if (paths.Length > 1) return first;
+                var (prompt, _) = TokenCounts(first);
+                var wanted = first.RootElement.TryGetProperty("ollama_response", out _) && !NumCtxFixed && prompt is { } promptSize
+                    ? LargerContext(promptSize, maxTokens) : null;
+                if (wanted is not { } larger || larger <= (NumCtx ?? 0)) return first;     // reported below
+                first.Dispose();
+                logger.LogWarning("The prompt for {Video} filled the model's context window; raising it to {Size} tokens and trying again", job.Name, larger);
+                NumCtx = larger;
+                return await ModelCalls.Ask(client, config, Request, true, ct);
+            }
+
+            // Case 2: the model really wrote up to the token limit (typically it is looping). One more try with
+            // another seed and more room; the fixed seed would otherwise repeat exactly the same answer.
+            first.Dispose();
+            logger.LogWarning("The model reached its output limit on {Video}; trying once more with another seed and a higher limit", job.Name);
+            maxTokens = 1200; seed = 8;
+            return await ModelCalls.Ask(client, config, Request, true, ct);
+        }
+        using var doc = await AskModel();
         await File.WriteAllTextAsync(Path.Combine(store.Folder(job.Id), "last-model-response.json"), doc.RootElement.GetRawText(), ct);
         var choice = doc.RootElement.GetProperty("choices")[0];
         var message = choice.GetProperty("message");
@@ -418,7 +459,10 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
                 }
         store.Update(job.Id, j => j with { RawText = raw });
         if (choice.TryGetProperty("finish_reason", out var finish) && finish.GetString() == "length")
+        {
+            if (ContextFull(doc, maxTokens)) throw new UserError(ContextFullMessage(TokenCounts(doc).Prompt), 502);
             throw new UserError("The model reached its output limit before finishing. No flags were assumed; retry this video.", 502);
+        }
         if (string.IsNullOrWhiteSpace(raw))
             throw new UserError("The model returned an empty answer. No description or flags were generated. Server diagnostics were saved.", 502);
         using var parsed = ParseObject(raw);
@@ -428,6 +472,44 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
         var (decision, used) = Scoring.Decide(answer.Suspicious!, score, config.SuspiciousThreshold);
         return answer with { Suspicious = decision, ModelSuspicious = answer.Suspicious, SuspiciousScore = used, ScoreSource = used is null ? null : "logprobs" };
     }
+    private static bool HitOutputLimit(JsonDocument response) =>
+        response.RootElement.GetProperty("choices")[0].TryGetProperty("finish_reason", out var finish) && finish.GetString() == "length";
+
+    // Context window (num_ctx) sent to Ollama's native API. null = whatever the server uses by default (8192 here).
+    // CCTV_NUM_CTX fixes it. Otherwise it is raised once, automatically, the first time a prompt fills the window,
+    // and stays raised so Ollama does not have to reload the model with a different size for every request.
+    internal static int? NumCtx { get; private set; } =
+        int.TryParse(Environment.GetEnvironmentVariable("CCTV_NUM_CTX"), out var configuredContext) && configuredContext >= 2048 ? configuredContext : null;
+    private static readonly bool NumCtxFixed = NumCtx is not null;
+
+    // Token counts reported by the server: Ollama's own fields, or the OpenAI-style usage block.
+    internal static (int? Prompt, int? Generated) TokenCounts(JsonDocument response)
+    {
+        static int? Count(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt32() : null;
+        var root = response.RootElement;
+        if (root.TryGetProperty("ollama_response", out var native)) return (Count(native, "prompt_eval_count"), Count(native, "eval_count"));
+        if (root.TryGetProperty("usage", out var usage)) return (Count(usage, "prompt_tokens"), Count(usage, "completion_tokens"));
+        return (null, null);
+    }
+
+    // DescribeBatches splits a batch in half when an error mentions "context size", so keep that wording.
+    internal static string ContextFullMessage(int? promptTokens) =>
+        $"The prompt ({promptTokens?.ToString() ?? "?"} tokens) exceeds the model's context size, so the answer was cut off. No flags were assumed. " +
+        "Lower CCTV_MAX_FRAMES, turn off batch processing, or enlarge the context (CCTV_NUM_CTX, or OLLAMA_CONTEXT_LENGTH in Ollama).";
+
+    // Stopped well before the output limit although the server said "length": the window was full, not the answer.
+    internal static bool ContextFull(JsonDocument response, int maxTokens) =>
+        TokenCounts(response).Generated is { } generated && generated < maxTokens * 0.9;
+
+    // The smallest of 4096 ... 32768 that holds the prompt, the answer and some slack; null when even that is not enough.
+    internal static int? LargerContext(int promptTokens, int maxTokens)
+    {
+        var needed = promptTokens + maxTokens + 256;
+        var size = 4096;
+        while (size < needed) size *= 2;
+        return size <= 32768 ? size : null;
+    }
+
     private async Task<DescriptionResult> ReviewCustomFlag(VideoJob job, ModelSettings config,
         DescriptionResult result, CancellationToken ct)
     {
@@ -538,6 +620,16 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
             return nativeMessage;
         }).ToArray();
         var wantLogprobs = root.TryGetProperty("logprobs", out var logprobsFlag) && logprobsFlag.ValueKind == JsonValueKind.True;
+        var modelOptions = new Dictionary<string, object>
+        {
+            ["num_predict"] = root.GetProperty("max_tokens").GetInt32(),
+            ["temperature"] = root.GetProperty("temperature").GetDouble(),
+            ["top_p"] = 0.9,
+            ["frequency_penalty"] = root.TryGetProperty("frequency_penalty", out var frequency) ? frequency.GetDouble() : 0,
+            ["presence_penalty"] = root.TryGetProperty("presence_penalty", out var presence) ? presence.GetDouble() : 0,
+            ["seed"] = root.TryGetProperty("seed", out var seedValue) && seedValue.ValueKind == JsonValueKind.Number ? seedValue.GetInt32() : 7
+        };
+        if (NumCtx is { } contextSize) modelOptions["num_ctx"] = contextSize;
         using var native = await client.PostAsJsonAsync(new Uri(uri, "/api/chat"), new
         {
             model = config.Model,
@@ -547,15 +639,7 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
             logprobs = wantLogprobs,
             top_logprobs = wantLogprobs ? Scoring.TopLogprobs : 0,
             format = root.GetProperty("response_format").GetProperty("json_schema").GetProperty("schema"),
-            options = new
-            {
-                num_predict = root.GetProperty("max_tokens").GetInt32(),
-                temperature = root.GetProperty("temperature").GetDouble(),
-                top_p = 0.9,
-                frequency_penalty = root.TryGetProperty("frequency_penalty", out var frequency) ? frequency.GetDouble() : 0,
-                presence_penalty = root.TryGetProperty("presence_penalty", out var presence) ? presence.GetDouble() : 0,
-                seed = 7
-            }
+            options = modelOptions
         }, ct);
         var body = await native.Content.ReadAsStringAsync(ct);
         if (!native.IsSuccessStatusCode)

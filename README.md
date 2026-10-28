@@ -171,6 +171,7 @@ All runtime configuration is through environment variables. In `start.bat` use `
 | `CCTV_YOLO_PYTHON` | `../../work/yolo-env/bin/python` | Python interpreter with ultralytics and OpenCV                                 |
 | `CCTV_MAX_FRAMES`  | `150`                            | Maximum frames sent per video (minimum 2). Lower it to speed up laptops        |
 | `CCTV_MAX_UPLOAD_GB` | `20`                           | Total size of uploaded videos. Uploads are refused (HTTP 507) once it is reached. Retention never deletes uploads, so remove them yourself |
+| `CCTV_NUM_CTX`     | server default                   | Context window (`num_ctx`) sent to Ollama, for example `16384`. If a prompt fills the window the app raises it once by itself; set this to fix a size. Larger windows use more memory |
 | `CCTV_ALLOW_UNC`   | off                              | Set to `1` to allow Windows network paths (`\\server\share`) when linking a folder. Blocked by default |
 | `CCTV_API_KEY`     | none                             | API key for the notebook backend. Never stored in the browser                  |
 | `CCTV_UI_PASSWORD` | none                             | Turns on the sign-in page and protects every page and API call                 |
@@ -389,6 +390,7 @@ python eval/analyze_app_eval.py --results eval/runs/app_v1/results.jsonl \
 | "Person tracking is not installed"              | Same as above, or `tracking/yolov8n.pt` is missing                                                   |
 | Model not installed / cannot reach model server | Start Ollama, run `tools/setup-model.*`, then select the model in Settings                           |
 | First video takes very long                     | Cold model load. Warm up with a short clip                                                           |
+| "The prompt (… tokens) fills the model's context window" | Too many frames for the model's context. Lower `CCTV_MAX_FRAMES`, turn on batching, or set `CCTV_NUM_CTX` (or `OLLAMA_CONTEXT_LENGTH` in Ollama) to `16384` |
 | "no people detected" and no description         | Expected when nobody is in the clip. The model is not called, and the job still completes            |
 | Page has no styling                             | The browser cannot reach the Bootstrap CDN                                                           |
 | Cannot sign in after restart                    | Sessions are tied to the password. Changing `CCTV_UI_PASSWORD` signs everyone out                    |

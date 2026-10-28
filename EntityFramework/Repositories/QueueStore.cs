@@ -38,11 +38,32 @@ public sealed class QueueStore : IQueueRepository
             }
         }
     }
+    private DateTime lastSaveWarning = DateTime.MinValue;
+
     private void Persist()
     {
-        File.WriteAllText(Path.Combine(root, "state.tmp"),
-            JsonSerializer.Serialize(new StoredState(settings, items) { LinkedFolder = linkedFolder }, Json));
-        File.Move(Path.Combine(root, "state.tmp"), Path.Combine(root, "state.json"), true);
+        var temp = Path.Combine(root, "state.tmp");
+        var target = Path.Combine(root, "state.json");
+        var json = JsonSerializer.Serialize(new StoredState(settings, items) { LinkedFolder = linkedFolder }, Json);
+        // On Windows another process (antivirus, a sync client, the search indexer) can hold state.json open for a
+        // moment, and replacing it then fails with "Access to the path is denied". That is nearly always gone a
+        // moment later, so try a few times before giving up.
+        for (var attempt = 1; ; attempt++)
+        {
+            try { File.WriteAllText(temp, json); File.Move(temp, target, true); return; }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                if (attempt < 6) { Thread.Sleep(25 * (1 << (attempt - 1))); continue; }     // 25, 50, 100, 200, 400 ms
+                // Give up for now. The state is still in memory and every later change writes all of it again, so a
+                // video must not fail just because this one write did.
+                if (DateTime.UtcNow - lastSaveWarning > TimeSpan.FromSeconds(30))
+                {
+                    lastSaveWarning = DateTime.UtcNow;
+                    Console.Error.WriteLine($"state.json could not be saved ({ex.Message}). It will be written again on the next change.");
+                }
+                return;
+            }
+        }
     }
     // The UI polls this every second or so, so it gets the list without the bulky parts nobody reads there:
     // the model's raw text and the per-sample person scores (hundreds per video). Export and the stored state keep them.

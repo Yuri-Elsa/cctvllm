@@ -31,4 +31,20 @@ public class HardeningTests
         Assert.Empty(store.Jobs());
         Assert.Single(Directory.GetFiles(data, "state.corrupt-*.json"));
     }
+
+    [Fact]
+    public void A_state_file_that_cannot_be_replaced_for_a_moment_does_not_fail_the_update_and_catches_up_later()
+    {
+        using var app = new TestApp();
+        var job = new VideoJob { Id = Guid.NewGuid().ToString("N"), Name = "v.mp4", Status = "queued", Stage = "Queued" };
+        app.Store.Add(job);
+        var statePath = Path.Combine(app.Dir, "data", "state.json");
+
+        using (new FileStream(statePath, FileMode.Open, FileAccess.Read, FileShare.None))   // another program holds the file
+            app.Store.Update(job.Id, j => j with { Stage = "while locked" });                // must not throw
+
+        Assert.Equal("while locked", app.Store.Get(job.Id).Stage);                             // the change is kept in memory
+        app.Store.Update(job.Id, j => j with { Stage = "after unlock" });                      // and the next write saves everything
+        Assert.Contains("after unlock", File.ReadAllText(statePath));
+    }
 }

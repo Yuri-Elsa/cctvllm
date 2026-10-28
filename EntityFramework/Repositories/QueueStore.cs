@@ -151,6 +151,22 @@ public sealed class QueueStore : IQueueRepository
             Update(id, j => j with { Status = "queued", Stage = "Queued", Error = null });
         }
     }
+    public (int Removed, int Skipped) RemoveMany(IEnumerable<string> ids)
+    {
+        lock (gate)
+        {
+            var wanted = ids.ToHashSet();
+            var doomed = items.Where(j => wanted.Contains(j.Id) && j.Status != "processing").Select(j => j.Id).ToHashSet();
+            if (doomed.Count == 0) return (0, wanted.Count);
+            items.RemoveAll(j => doomed.Contains(j.Id)); Persist();
+            foreach (var id in doomed)
+            {
+                try { var dir = Folder(id); if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { } 
+            }
+            return (doomed.Count, wanted.Count - doomed.Count);
+        }
+    }
     public void Remove(string id)
     {
         lock (gate)

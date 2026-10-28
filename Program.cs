@@ -272,6 +272,10 @@ app.MapPost("/api/queue/{action}", (string action, QueueStore s) => {
     if (action is not ("start" or "pause")) throw new UserError("Unknown queue action.");
     s.SetRunning(action == "start"); return Results.Ok(new { ok = true });
 });
+app.MapPost("/api/videos/delete", (string[] ids, QueueStore s) => {
+    var (removed, skipped) = s.RemoveMany(ids ?? []);
+    return Results.Ok(new { removed, skipped });
+});
 app.MapPost("/api/videos/{id}/review", (string id, ReviewRequest value, QueueStore s) => {
     s.SetReview(id, value.State);
     return Results.Ok(new { ok = true, reviewState = s.Get(id).ReviewState });

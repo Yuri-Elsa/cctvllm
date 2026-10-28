@@ -1,7 +1,7 @@
 const $ = id => document.getElementById(id);
 const escapeHtml = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const duration = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
-let state = { jobs: [], running: false, settings: {} }, cameras = [], scan = {}, selected = null, queueFilter = 'all', cameraFilter = 'all', queueKey = '', detailKey = '', cameraOptionsKey = '', cameraPanelHtml = '', seenScan, uploading = false, timer;
+let state = { jobs: [], running: false, settings: {} }, cameras = [], scan = {}, selected = null, queueFilter = 'all', cameraFilter = 'all', queueKey = '', checked = new Set(), detailKey = '', cameraOptionsKey = '', cameraPanelHtml = '', seenScan, uploading = false, timer;
 function toast(text) { $('toast').textContent = text; $('toast').className = 'visible'; clearTimeout(timer); timer = setTimeout(() => $('toast').className = '', 7000) }
 async function api(path, options = {}) { const r = await fetch(path, options); if (r.status === 401) { location.href = '/Account/Login'; throw Error('Signed out. Opening the sign-in page…') } const data = await r.json(); if (!r.ok) throw Error(data.detail || 'Request failed.'); return data }
 async function refresh() {
@@ -66,6 +66,9 @@ function render() {
     $('filterFlagged').setAttribute('aria-pressed', String(queueFilter === 'flagged'));
     if (!visibleJobs.some(j => j.id === selected)) selected = visibleJobs[0]?.id ?? null;
     $('count').textContent = visibleJobs.length;
+    for (const id of checked) if (!state.jobs.some(j => j.id === id)) checked.delete(id);
+    $('deleteSelected').textContent = `Delete selected (${checked.size})`; $('deleteSelected').disabled = !checked.size;
+    $('deleteAll').disabled = !state.jobs.length; $('selectAll').disabled = !visibleJobs.some(canSelect);
     $('totalStat').textContent = state.jobs.length;
     $('readyStat').textContent = state.jobs.filter(j => j.status === 'completed').length;
     $('flaggedStat').textContent = state.jobs.filter(isFlagged).length;
@@ -80,8 +83,8 @@ function render() {
     $('linkFolder').textContent = linked ? 'Change' : 'Link a folder';
     $('refreshFolder').hidden = !linked;
     $('unlinkFolder').hidden = !linked;
-    const key = JSON.stringify([selected, queueFilter, cameraFilter, state.jobs.map(j => [j.id, j.status, j.stage, j.suspicious, j.weapon, j.reviewState, j.notifiedAt, j.notifyError, j.screening?.agent?.action])]);
-    if (key !== queueKey) { queueKey = key; $('queue').innerHTML = visibleJobs.length ? visibleJobs.map(j => `<div class="queue-item ${selected === j.id ? 'selected' : ''}" role="button" tabindex="0" data-select="${j.id}" aria-label="View video ${state.jobs.indexOf(j) + 1}: ${escapeHtml(j.cameraName ? j.cameraName + ', ' : '')}${escapeHtml(j.name)}"><span class="queue-number" aria-hidden="true">${state.jobs.indexOf(j) + 1}</span><img src="/api/videos/${j.id}/poster.jpg" alt=""><div class="row-info"><span class="row-name">${escapeHtml(j.name)}</span><div class="row-meta">${cameraChip(j)}${segmentLabel(j)}<span>${duration(j.duration)} · ${(j.bytes / 1048576).toFixed(1)} MB</span>${reviewChip(j)}${notifyChip(j)}</div></div><span class="queue-status ${isDropped(j) ? 'dropped' : isFlagged(j) ? 'flagged' : j.status}">${isDropped(j) ? 'Dropped' : isFlagged(j) ? 'Flagged' : j.status === 'completed' ? 'Ready' : j.status === 'processing' ? 'Processing' : j.status === 'queued' ? 'Queued' : j.status === 'failed' ? 'Failed' : 'Cancelled'}</span><button class="remove" data-id="${j.id}" data-action="${['queued', 'processing'].includes(j.status) ? 'cancel' : 'delete'}" aria-label="${['queued', 'processing'].includes(j.status) ? 'Cancel' : 'Remove'} ${escapeHtml(j.name)}">×</button></div>`).join('') : `<div class="empty">${queueFilter === 'flagged' ? 'No flagged videos' + (cameraFilter === 'all' ? '.' : ' for this camera.') : cameraFilter !== 'all' ? 'No videos for this camera yet.' : 'No videos added.'}</div>` }
+    const key = JSON.stringify([selected, queueFilter, cameraFilter, [...checked], state.jobs.map(j => [j.id, j.status, j.stage, j.suspicious, j.weapon, j.reviewState, j.notifiedAt, j.notifyError, j.screening?.agent?.action])]);
+    if (key !== queueKey) { queueKey = key; $('queue').innerHTML = visibleJobs.length ? visibleJobs.map(j => `<div class="queue-item ${selected === j.id ? 'selected' : ''}" role="button" tabindex="0" data-select="${j.id}" aria-label="View video ${state.jobs.indexOf(j) + 1}: ${escapeHtml(j.cameraName ? j.cameraName + ', ' : '')}${escapeHtml(j.name)}"><input type="checkbox" data-check="${j.id}" ${checked.has(j.id) ? 'checked' : ''} ${canSelect(j) ? '' : 'disabled'} aria-label="Select ${escapeHtml(j.name)}"><span class="queue-number" aria-hidden="true">${state.jobs.indexOf(j) + 1}</span><img src="/api/videos/${j.id}/poster.jpg" alt=""><div class="row-info"><span class="row-name">${escapeHtml(j.name)}</span><div class="row-meta">${cameraChip(j)}${segmentLabel(j)}<span>${duration(j.duration)} · ${(j.bytes / 1048576).toFixed(1)} MB</span>${reviewChip(j)}${notifyChip(j)}</div></div><span class="queue-status ${isDropped(j) ? 'dropped' : isFlagged(j) ? 'flagged' : j.status}">${isDropped(j) ? 'Dropped' : isFlagged(j) ? 'Flagged' : j.status === 'completed' ? 'Ready' : j.status === 'processing' ? 'Processing' : j.status === 'queued' ? 'Queued' : j.status === 'failed' ? 'Failed' : 'Cancelled'}</span><button class="remove" data-id="${j.id}" data-action="${['queued', 'processing'].includes(j.status) ? 'cancel' : 'delete'}" aria-label="${['queued', 'processing'].includes(j.status) ? 'Cancel' : 'Remove'} ${escapeHtml(j.name)}">×</button></div>`).join('') : `<div class="empty">${queueFilter === 'flagged' ? 'No flagged videos' + (cameraFilter === 'all' ? '.' : ' for this camera.') : cameraFilter !== 'all' ? 'No videos for this camera yet.' : 'No videos added.'}</div>` }
     const job = state.jobs.find(j => j.id === selected); const detail = JSON.stringify(job ?? null); if (detail === detailKey) return; detailKey = detail;
     $('status').textContent = job?.stage ?? '';
     if (job && $('detail').dataset.id === job.id) { $('result').innerHTML = result(job); return }
@@ -212,7 +215,21 @@ $('mode').onchange = () => { modelListRequest++; $('refreshModels').disabled = f
 $('close').onclick = () => $('settings').close();
 const thresholdValue = id => { const v = parseFloat($(id).value); if (!Number.isFinite(v) || v < 0 || v > 1) throw Error('Thresholds must be numbers between 0 and 1.'); return v };
 $('settingsForm').onsubmit = async e => { e.preventDefault(); try { await api('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: $('mode').value, endpoint: $('endpoint').value, model: $('model').value, personLabels: $('personLabels').checked, batchProcessing: $('batchProcessing').checked, flagActivity: $('flagActivity').value, siteContextEnabled: $('siteContextEnabled').checked, siteContext: $('siteContext').value, weaponEnabled: $('weaponEnabled').checked, personDetector: $('personDetector').value, personThreshold: thresholdValue('personThreshold'), suspiciousThreshold: thresholdValue('suspiciousThreshold'), agentEnabled: $('agentEnabled').checked }) }); $('settings').close(); await refresh(); toast('Settings saved.') } catch (e) { $('settingsError').textContent = e.message } };
+const canSelect = j => j.status !== 'processing';
+const isVisible = j => matchesCamera(j) && (queueFilter !== 'flagged' || isFlagged(j));
+$('selectAll').onclick = () => { const ids = state.jobs.filter(j => isVisible(j) && canSelect(j)).map(j => j.id); const all = ids.every(id => checked.has(id)); ids.forEach(id => all ? checked.delete(id) : checked.add(id)); render() };
+async function deleteJobs(ids, label) {
+    if (!ids.length || !confirm(`Delete ${label}? This cannot be undone. Original files in a linked folder are not touched.`)) return;
+    try {
+        const r = await api('/api/videos/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ids) });
+        ids.forEach(id => checked.delete(id)); await refresh();
+        toast(`${r.removed} deleted${r.skipped ? ` · ${r.skipped} skipped (still processing, cancel it first)` : ''}.`)
+    } catch (e) { toast(e.message) }
+}
+$('deleteSelected').onclick = () => deleteJobs([...checked], `${checked.size} selected video${checked.size > 1 ? 's' : ''}`);
+$('deleteAll').onclick = () => deleteJobs(state.jobs.map(j => j.id), `all ${state.jobs.length} videos`);
 document.addEventListener('click', async e => {
+    const check = e.target.closest('[data-check]'); if (check) { check.checked ? checked.add(check.dataset.check) : checked.delete(check.dataset.check); render(); return }
     const action = e.target.closest('[data-action]'); if (action) { try { await api(`/api/videos/${action.dataset.id}/${action.dataset.action}`, { method: 'POST' }); await refresh() } catch (e) { toast(e.message) } return }
     const review = e.target.closest('[data-review]');
     if (review) {

@@ -7,26 +7,65 @@ public static class LlmPersonDetector
     private const string Question =
         "Apakah ada setidaknya satu orang yang terlihat pada gambar ini, termasuk yang jauh, kecil, atau terlihat sebagian? Jawab yes atau no.";
 
-    public static async Task<(string[] Paths, string[] PlainPaths, double[] Timestamps, string Evidence, string Motion, PersonSample[] Samples)> Run(
+    public static async Task<Detection> Run(
         VideoTools videos, IHttpClientFactory clients, VideoJob job, string videoPath, string folder,
-        ModelSettings config, double modelGap, Action<string> stage, CancellationToken ct)
+        ModelSettings config, double modelGap, string root, Action<string> stage, CancellationToken ct)
     {
         if (!File.Exists(videoPath))
             throw new UserError("This video is no longer at its original path in the linked folder.", 404);
         var interval = Math.Max(modelGap, job.Duration / VideoTools.MaxFrames);
         var frames = await videos.SampleFrames(videoPath, folder, interval, ct);
         using var client = ModelCalls.CreateClient(clients);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var motionTask = MotionTimeline(root, folder, videoPath, job.Fps, linked.Token);
+        double[] scores;
+        try
+        {
+            scores = await ScoreAll(client, config, frames.Paths,
+                (done, total) => stage($"Detecting people (LLM) {done}/{total}"), ct);
+        }
+        catch
+        {
+            linked.Cancel();
+            try { await motionTask; } catch { }
+            throw;
+        }
+        var motion = await motionTask;
         var samples = new List<PersonSample>();
         var paths = new List<string>(); var times = new List<double>();
         for (var i = 0; i < frames.Paths.Length; i++)
         {
-            ct.ThrowIfCancellationRequested();
-            stage($"Detecting people (LLM) {i + 1}/{frames.Paths.Length}");
-            var score = await Score(client, config, frames.Paths[i], ct);
-            samples.Add(new PersonSample(frames.Timestamps[i], Math.Round(score, 4)));
-            if (score >= config.PersonThreshold) { paths.Add(frames.Paths[i]); times.Add(frames.Timestamps[i]); }
+            samples.Add(new PersonSample(frames.Timestamps[i], Math.Round(scores[i], 4)));
+            if (scores[i] >= config.PersonThreshold) { paths.Add(frames.Paths[i]); times.Add(frames.Timestamps[i]); }
         }
-        return (paths.ToArray(), paths.ToArray(), times.ToArray(), "[]", "[]", samples.ToArray());
+        return new Detection(paths.ToArray(), paths.ToArray(), times.ToArray(), "[]", motion, samples.ToArray(),
+            LlmChecked: frames.Paths.Length, LlmRejected: frames.Paths.Length - paths.Count);
+    }
+
+    private static async Task<string> MotionTimeline(string root, string folder, string videoPath, double fps, CancellationToken ct)
+    {
+        try
+        {
+            var tracked = await PersonTracking.Track(root, folder, videoPath, fps, PersonTracking.MotionConf,
+                PersonTracking.ModelMinGap, null, true, ct);
+            return tracked.Motion;
+        }
+        catch (UserError ex) when (ex.Status == 503) { return "[]"; }
+    }
+
+    internal static async Task<double[]> ScoreAll(HttpClient client, ModelSettings config, IReadOnlyList<string> paths,
+        Action<int, int> progress, CancellationToken ct)
+    {
+        var scores = new double[paths.Count];
+        var done = 0;
+        await Parallel.ForEachAsync(Enumerable.Range(0, paths.Count),
+            new ParallelOptions { MaxDegreeOfParallelism = Math.Clamp(config.LlmConcurrency, 1, 8), CancellationToken = ct },
+            async (i, token) =>
+            {
+                scores[i] = await Score(client, config, paths[i], token);
+                progress(Interlocked.Increment(ref done), paths.Count);
+            });
+        return scores;
     }
 
     internal static async Task<double> Score(HttpClient client, ModelSettings config, string path, CancellationToken ct)

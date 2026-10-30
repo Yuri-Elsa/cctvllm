@@ -7,6 +7,9 @@ public sealed record ModelSettings(string Mode = "local", string Endpoint = "htt
     public bool BatchProcessing { get; init; }
     public string PersonDetector { get; init; } = "yolo";
     public double PersonThreshold { get; init; } = 0.25;
+    public double PersonVerifyLow { get; init; } = 0.10;
+    public double HybridLlmThreshold { get; init; } = 0.5;
+    public int LlmConcurrency { get; init; } = 2;
     public double SuspiciousThreshold { get; init; } = 0.5;
     public bool AgentEnabled { get; init; } = true;
 }

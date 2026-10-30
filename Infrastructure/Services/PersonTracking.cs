@@ -1,6 +1,10 @@
 using System.Diagnostics;
 using System.Text.Json;
 
+public sealed record TrackedFrame(string Path, string PlainPath, double Timestamp, JsonElement People, double Score, bool Uncertain);
+
+public sealed record TrackingOutput(TrackedFrame[] Frames, string Motion, PersonSample[] Samples);
+
 public sealed class PersonTracking
 {
     // Detection runs denser than the frames actually sent to the vision model: motion is
@@ -8,13 +12,26 @@ public sealed class PersonTracking
     // costs roughly a thousand vision tokens.
     public const double SampleInterval = 0.5;   // seconds between detections (2 fps)
     public const double ModelMinGap = 1.0;      // minimum seconds between frames sent onward
+    public const double MotionConf = 0.25;
 
     public static string PythonPath(string root) => Environment.GetEnvironmentVariable("CCTV_YOLO_PYTHON") ??
         Path.GetFullPath(Path.Combine(root, "../../work/yolo-env/bin/python"));
     public static string WeightsPath(string root) => Path.Combine(root, "tracking/yolov8n.pt");
 
-    public static async Task<(string[] Paths, string[] PlainPaths, double[] Timestamps, string Evidence, string Motion, PersonSample[] Samples)> Run(
+    public static async Task<Detection> Run(
         string root, string folder, string videoPath, double fps, double conf, double modelMinGap, CancellationToken ct)
+    {
+        var tracked = await Track(root, folder, videoPath, fps, conf, modelMinGap, null, false, ct);
+        return Shape(tracked.Frames, tracked.Motion, tracked.Samples);
+    }
+
+    public static Detection Shape(TrackedFrame[] frames, string motion, PersonSample[] samples) =>
+        new(frames.Select(f => f.Path).ToArray(), frames.Select(f => f.PlainPath).ToArray(), frames.Select(f => f.Timestamp).ToArray(),
+            JsonSerializer.Serialize(frames.Select(f => new { timestamp = f.Timestamp, people = f.People })), motion, samples);
+
+    public static async Task<TrackingOutput> Track(
+        string root, string folder, string videoPath, double fps, double conf, double modelMinGap,
+        double? verifyLow, bool motionOnly, CancellationToken ct)
     {
         var python = PythonPath(root);
         var weights = WeightsPath(root);
@@ -22,17 +39,20 @@ public sealed class PersonTracking
             throw new UserError("Person tracking is not installed. Install the tracking dependencies to filter frames containing people.", 503);
         if (!File.Exists(videoPath))
             throw new UserError("This video is no longer at its original path in the linked folder.", 404);
-        var manifest = Path.Combine(folder, "tracking-input.json");
-        await File.WriteAllTextAsync(manifest, JsonSerializer.Serialize(new
+        var manifest = Path.Combine(folder, motionOnly ? "tracking-motion-input.json" : "tracking-input.json");
+        var spec = new Dictionary<string, object>
         {
             // May sit outside the job folder: a linked video is read where the user keeps it.
-            video = videoPath,
-            fps,
-            max_frames = VideoTools.MaxFrames,
-            sample_interval = SampleInterval,
-            model_min_gap = modelMinGap,
-            conf
-        }), ct);
+            ["video"] = videoPath,
+            ["fps"] = fps,
+            ["max_frames"] = VideoTools.MaxFrames,
+            ["sample_interval"] = SampleInterval,
+            ["model_min_gap"] = modelMinGap,
+            ["conf"] = conf
+        };
+        if (verifyLow is { } low) spec["verify_low"] = low;
+        if (motionOnly) spec["motion_only"] = true;
+        await File.WriteAllTextAsync(manifest, JsonSerializer.Serialize(spec), ct);
         using var process = new Process
         {
             StartInfo = new ProcessStartInfo(python)
@@ -83,10 +103,11 @@ public sealed class PersonTracking
         var records = framesElement.EnumerateArray().ToArray();
         if (records.Length > VideoTools.MaxFrames) throw new UserError("Person detection exceeded the frame cap.", 502);
         records = records.Where(r => r.GetProperty("people").GetArrayLength() > 0).ToArray();
-        return (records.Select(r => r.GetProperty("path").GetString()!).ToArray(), records.Select(r => r.GetProperty("plain_path").GetString()!).ToArray(), records.Select(r => r.GetProperty("timestamp").GetDouble()).ToArray(),
-            JsonSerializer.Serialize(records.Select(r => new {
-                timestamp = r.GetProperty("timestamp").GetDouble(),
-                people = r.GetProperty("people").Clone()
-            })), motion, samples);
+        var frames = records.Select(r => new TrackedFrame(
+            r.GetProperty("path").GetString()!, r.GetProperty("plain_path").GetString()!, r.GetProperty("timestamp").GetDouble(),
+            r.GetProperty("people").Clone(),
+            r.TryGetProperty("score", out var score) && score.ValueKind == JsonValueKind.Number ? score.GetDouble() : 0,
+            r.TryGetProperty("uncertain", out var flag) && flag.ValueKind == JsonValueKind.True)).ToArray();
+        return new TrackingOutput(frames, motion, samples);
     }
 }

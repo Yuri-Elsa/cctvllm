@@ -160,19 +160,26 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
     {
         store.Update(job.Id, j => j with { Stage = "Detecting people" });
         var llmDetector = config.PersonDetector == "llm";
-        var tracked = llmDetector
-            ? await LlmPersonDetector.Run(videos, clients, job, store.VideoPath(job), store.Folder(job.Id), config, modelGap,
-                stage => store.Update(job.Id, j => j with { Stage = stage }), ct)
-            : await PersonTracking.Run(env.ContentRootPath, store.Folder(job.Id), store.VideoPath(job), job.Fps, config.PersonThreshold, modelGap, ct);
+        Action<string> stage = s => store.Update(job.Id, j => j with { Stage = s });
+        var tracked = config.PersonDetector switch
+        {
+            "llm" => await LlmPersonDetector.Run(videos, clients, job, store.VideoPath(job), store.Folder(job.Id), config, modelGap,
+                env.ContentRootPath, stage, ct),
+            "hybrid" => await HybridPersonDetector.Run(clients, job, store.VideoPath(job), store.Folder(job.Id), config, modelGap,
+                env.ContentRootPath, stage, ct),
+            _ => await PersonTracking.Run(env.ContentRootPath, store.Folder(job.Id), store.VideoPath(job), job.Fps, config.PersonThreshold, modelGap, ct)
+        };
         var timestamps = tracked.Timestamps;
         store.Update(job.Id, j => j with { Timestamps = timestamps });
         var person = new ScreeningLog
         {
-            PersonDetector = llmDetector ? "llm" : "yolo",
+            PersonDetector = config.PersonDetector is "llm" or "hybrid" ? config.PersonDetector : "yolo",
             PersonThreshold = config.PersonThreshold,
             PersonMaxScore = tracked.Samples.Length == 0 ? null : tracked.Samples.Max(x => x.Score),
             PersonSampled = tracked.Samples.Length,
             PersonKept = timestamps.Length,
+            PersonLlmChecked = tracked.LlmChecked,
+            PersonLlmRejected = tracked.LlmRejected,
             PersonSamples = tracked.Samples
         };
         // Nobody in the video is a normal result, not a failure: the job completes, is not flagged,
@@ -180,7 +187,8 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
         if (timestamps.Length == 0)
             return new DescriptionResult("Tidak ada orang terdeteksi pada frame yang diperiksa, sehingga tidak ada gambar yang dikirim ke model.",
                 "no", config.WeaponEnabled ? "no" : null, "", [], "Person detection only", NoPeople: true, Person: person);
-        // The LLM detector has no boxes or motion data, so its frames are always sent plain.
+        // The LLM detector has no boxes, so its frames are always sent plain. Its speeds come from the YOLO tracker run
+        // beside it; the hybrid detector has both boxes and speeds.
         var paths = config.PersonLabels && !llmDetector ? tracked.Paths :
             tracked.PlainPaths;
         var result = (await DescribeBatches(job, config, paths, timestamps,

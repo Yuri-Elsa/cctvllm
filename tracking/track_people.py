@@ -70,6 +70,21 @@ def associate(previous, current, dt):
     return matched
 
 
+def choose_frames(records, model_gap):
+    """Pick roughly one frame per `model_gap` seconds.
+
+    A frame whose person is only a low-confidence candidate ("uncertain") costs an extra LLM call to
+    verify and may be rejected, so a confirmed frame inside the same gap takes its slot instead.
+    """
+    chosen = []
+    for record in records:
+        if not chosen or record["timestamp"] - chosen[-1]["timestamp"] >= model_gap:
+            chosen.append(record)
+        elif chosen[-1].get("uncertain") and not record.get("uncertain"):
+            chosen[-1] = record
+    return chosen
+
+
 def select_records(records, limit):
     if len(records) <= limit:
         return records
@@ -86,7 +101,13 @@ def main():
     interval = float(spec.get("sample_interval", SAMPLE_INTERVAL))
     model_gap = float(spec.get("model_min_gap", MODEL_MIN_GAP))
     conf_threshold = float(spec.get("conf", CONF))
-    predict_floor = min(conf_threshold, LOG_FLOOR)
+    # Hybrid mode: boxes between verify_low and conf are "uncertain" candidates, handed to the LLM to
+    # confirm. Left out (or equal to conf) the behaviour is exactly the plain YOLO gate.
+    verify_low = min(float(spec.get("verify_low", conf_threshold)), conf_threshold)
+    # Motion only: measure speeds and the score trace, but write no frames (used beside the LLM
+    # detector, which decides presence itself and has no boxes to measure speed from).
+    motion_only = bool(spec.get("motion_only", False))
+    predict_floor = min(verify_low, LOG_FLOOR)
     model = YOLO(args.weights)
     cap = cv2.VideoCapture(spec["video"])
     if not cap.isOpened():
@@ -116,8 +137,10 @@ def main():
             boxes = result.boxes
             all_boxes = boxes.xyxy.tolist() if boxes is not None and len(boxes) else []
             all_conf = boxes.conf.tolist() if all_boxes else []
-            samples.append({"timestamp":round(timestamp,2),"score":round(max(all_conf),3) if all_conf else 0.0})
-            keep = [i for i,c in enumerate(all_conf) if c >= conf_threshold]
+            top = max(all_conf) if all_conf else 0.0
+            samples.append({"timestamp":round(timestamp,2),"score":round(top,3)})
+            confirmed = top >= conf_threshold
+            keep = [i for i,c in enumerate(all_conf) if c >= (conf_threshold if confirmed else verify_low)]
             if not keep:
                 previous, previous_time = [], None
                 continue
@@ -129,7 +152,7 @@ def main():
             matched = associate(previous, current,
                                 timestamp - previous_time if previous_time is not None else 0)
             raw_path = output / f"{sample:04d}-plain.png"
-            if not cv2.imwrite(str(raw_path),frame): raise RuntimeError("Cannot save frame")
+            if not motion_only and not cv2.imwrite(str(raw_path),frame): raise RuntimeError("Cannot save frame")
             people = []
             for index,(box,confidence) in enumerate(zip(kept_boxes,kept_conf),1):
                 x1,y1,x2,y2 = map(int,box)
@@ -142,31 +165,34 @@ def main():
                                "motion":pace,
                                "box":[round(x1/frame.shape[1],3),round(y1/frame.shape[0],3),
                                       round(x2/frame.shape[1],3),round(y2/frame.shape[0],3)]})
+                if motion_only:
+                    continue
                 cv2.rectangle(frame,(x1,y1),(x2,y2),(40,210,255),1)
                 caption = " ".join(part for part in (label, pace) if part)
                 if caption:
                     cv2.putText(frame,caption,(x1,max(14,y1-4)),cv2.FONT_HERSHEY_SIMPLEX,.45,(40,210,255),1,cv2.LINE_AA)
             paced = [p for p in people if p["speed"] is not None]
             fastest = max(paced, key=lambda p: p["speed"], default=None)
-            motion.append({"timestamp":round(timestamp,2),"people":len(people),
-                           "fastest":fastest["speed"] if fastest else None,
-                           "motion":fastest["motion"] if fastest else None})
+            entry = {"timestamp":round(timestamp,2),"people":len(people),
+                     "fastest":fastest["speed"] if fastest else None,
+                     "motion":fastest["motion"] if fastest else None}
+            if not confirmed:
+                entry["uncertain"] = True   # the caller drops this entry if the LLM rejects the frame
+            motion.append(entry)
+            previous, previous_time = current, timestamp
+            if motion_only:
+                continue
             cv2.putText(frame,f"{timestamp:.2f}s",(6,18),cv2.FONT_HERSHEY_SIMPLEX,.5,(255,255,255),1,cv2.LINE_AA)
             path = output / f"{sample:04d}.png"
             if not cv2.imwrite(str(path),frame): raise RuntimeError("Cannot save labeled frame")
-            records.append({"path":str(path),"plain_path":str(raw_path),"timestamp":timestamp,"people":people})
-            previous, previous_time = current, timestamp
+            records.append({"path":str(path),"plain_path":str(raw_path),"timestamp":timestamp,"people":people,
+                            "score":round(top,3),"uncertain":not confirmed})
     finally:
         cap.release()
     # Every detected sample feeds the motion timeline, but only a ~1/sec subset
     # is sent to the vision model, so doubling the detection rate does not
     # double the number of images (and vision tokens) per video.
-    chosen, last = [], None
-    for record in records:
-        if last is None or record["timestamp"] - last >= model_gap:
-            chosen.append(record)
-            last = record["timestamp"]
-    chosen = select_records(chosen,spec.get("max_frames",150))
+    chosen = select_records(choose_frames(records, model_gap),spec.get("max_frames",150))
     (manifest.parent/"tracking-result.json").write_text(json.dumps({"frames":chosen,"motion":motion,"samples":samples}))
 if __name__=="__main__":
     main()

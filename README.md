@@ -145,8 +145,11 @@ Open **http://127.0.0.1:8766**.
 | --------------------- | ------------------------------------------------------------------------------------------------------- |
 | Server URL / Model    | OpenAI-compatible endpoint; the model list is read from the server                                      |
 | Person labels (YOLO)  | Draw boxes and per-frame labels on the frames sent to the model                                         |
-| Person detector       | `YOLO` (default, fast) or `LLM` (asks the vision model per frame; slower)                               |
-| Person threshold      | Minimum detection confidence, 0–1 (default 0.25)                                                        |
+| Person detector       | `YOLO` (default, fast), `Hybrid` (YOLO first, the vision model only checks doubtful frames) or `LLM` (asks the vision model about every frame; slowest) |
+| Person threshold      | Minimum detection confidence, 0–1 (default 0.25). In Hybrid, YOLO frames at or above it skip the LLM; try 0.5 |
+| Hybrid: check below   | YOLO floor, 0–1 (default 0.10). Frames whose best box is under it are dropped; frames between it and the person threshold go to the LLM |
+| Hybrid: LLM threshold | Keep a doubtful frame when the LLM's `yes` probability reaches this, 0–1 (default 0.5)                  |
+| Parallel LLM requests | How many frames the LLM and Hybrid detectors send at once, 1–8 (default 2). Ollama only runs them in parallel if `OLLAMA_NUM_PARALLEL` allows it |
 | Suspicious threshold  | Cut-off for the `yes` probability, 0–1 (default 0.5)                                                    |
 | Notification agent    | Let the model decide channel and urgency (Ollama mode only)                                             |
 | Batch processing      | Up to 10 frames per request on stronger hardware                                                        |
@@ -157,6 +160,8 @@ Open **http://127.0.0.1:8766**.
 | System check          | Re-runs the setup checks                                                                                |
 
 Settings apply to new runs.
+
+**Speed in LLM and Hybrid mode.** The vision model cannot measure how fast someone moves, so both modes take still/walking/running from the same YOLO tracker the YOLO mode uses, and the description model receives the same motion text in all three. Hybrid also keeps YOLO's boxes. If the tracking dependencies are not installed, LLM mode still works but without speeds. Hybrid can only recover people YOLO scores above `Hybrid: check below`; a person YOLO misses completely is not rescued, which `LLM` mode would catch. Hybrid reports how many frames it sent to the LLM (`personLlmChecked`, `personLlmRejected` in the screening log).
 
 ## Configuration reference
 
@@ -428,6 +433,7 @@ The unit tests cover authentication and login throttling, folder watching, expor
 
 ```bash
 python eval/tests/test_eval_pipeline.py
+python tracking/test_track_people.py
 ```
 
 ## Evaluation

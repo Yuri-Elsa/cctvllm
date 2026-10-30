@@ -186,7 +186,7 @@ $('refreshFolder').onclick = async () => {
     finally { $('refreshFolder').disabled = false }
 };
 $('cameraFilter').onchange = e => { cameraFilter = e.target.value; render() };
-function settingsNote() { $('thresholdNote').textContent = 'Person threshold: YOLO box confidence, or LLM p(yes). Suspicious threshold: flag when p(yes) is at least this value; needs token probabilities from the backend, otherwise the model\'s own yes/no is used. The agent and the LLM detector need Ollama mode. Applies to new runs.'; $('personLabelsLabel').hidden = false; $('settingsNote').textContent = `Custom prompt · ${state.frameLimit} frames · 600 output tokens. Smaller models may produce different results.` }
+function settingsNote() { $('thresholdNote').textContent = 'Person threshold: YOLO box confidence, or LLM p(yes). Hybrid: YOLO frames at or above the person threshold pass without the LLM, frames below the YOLO floor are dropped, and frames in between are checked by the LLM (kept when p(yes) reaches the hybrid LLM threshold); use a higher person threshold such as 0.5 so the LLM sees the doubtful ones. Suspicious threshold: flag when p(yes) is at least this value; needs token probabilities from the backend, otherwise the model\'s own yes/no is used. The agent, the LLM and the hybrid detector need Ollama mode; LLM and hybrid speeds come from YOLO tracking. Applies to new runs.'; $('personLabelsLabel').hidden = false; $('settingsNote').textContent = `Custom prompt · ${state.frameLimit} frames · 600 output tokens. Smaller models may produce different results.` }
 let modelListRequest = 0;
 function setModelOptions(models, current) {
     const choices = [...new Set([...(current ? [current] : []), ...models])];
@@ -213,6 +213,9 @@ $('settingsButton').onclick = () => {
     $('batchProcessing').checked = state.settings.batchProcessing === true;
     $('personDetector').value = state.settings.personDetector || 'yolo';
     $('personThreshold').value = state.settings.personThreshold ?? 0.25;
+    $('personVerifyLow').value = state.settings.personVerifyLow ?? 0.1;
+    $('hybridLlmThreshold').value = state.settings.hybridLlmThreshold ?? 0.5;
+    $('llmConcurrency').value = state.settings.llmConcurrency ?? 2;
     $('suspiciousThreshold').value = state.settings.suspiciousThreshold ?? 0.5;
     $('agentEnabled').checked = state.settings.agentEnabled !== false;
     $('flagActivity').value = state.settings.flagActivity || '';
@@ -226,7 +229,7 @@ $('refreshModels').onclick = loadModels;
 $('endpoint').onchange = loadModels;
 $('close').onclick = () => $('settings').close();
 const thresholdValue = id => { const v = parseFloat($(id).value); if (!Number.isFinite(v) || v < 0 || v > 1) throw Error('Thresholds must be numbers between 0 and 1.'); return v };
-$('settingsForm').onsubmit = async e => { e.preventDefault(); try { await api('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: $('mode').value, endpoint: $('endpoint').value, model: $('model').value, personLabels: $('personLabels').checked, batchProcessing: $('batchProcessing').checked, flagActivity: $('flagActivity').value, siteContextEnabled: $('siteContextEnabled').checked, siteContext: $('siteContext').value, weaponEnabled: $('weaponEnabled').checked, personDetector: $('personDetector').value, personThreshold: thresholdValue('personThreshold'), suspiciousThreshold: thresholdValue('suspiciousThreshold'), agentEnabled: $('agentEnabled').checked }) }); $('settings').close(); await refresh(); toast('Settings saved.') } catch (e) { $('settingsError').textContent = e.message } };
+$('settingsForm').onsubmit = async e => { e.preventDefault(); try { await api('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: $('mode').value, endpoint: $('endpoint').value, model: $('model').value, personLabels: $('personLabels').checked, batchProcessing: $('batchProcessing').checked, flagActivity: $('flagActivity').value, siteContextEnabled: $('siteContextEnabled').checked, siteContext: $('siteContext').value, weaponEnabled: $('weaponEnabled').checked, personDetector: $('personDetector').value, personThreshold: thresholdValue('personThreshold'), personVerifyLow: thresholdValue('personVerifyLow'), hybridLlmThreshold: thresholdValue('hybridLlmThreshold'), llmConcurrency: Math.round(Number($('llmConcurrency').value) || 2), suspiciousThreshold: thresholdValue('suspiciousThreshold'), agentEnabled: $('agentEnabled').checked }) }); $('settings').close(); await refresh(); toast('Settings saved.') } catch (e) { $('settingsError').textContent = e.message } };
 const canSelect = j => j.status !== 'processing';
 const isVisible = j => matchesCamera(j) && (queueFilter !== 'flagged' || isFlagged(j));
 $('selectAll').onclick = () => { const ids = state.jobs.filter(j => isVisible(j) && canSelect(j)).map(j => j.id); const all = ids.every(id => checked.has(id)); ids.forEach(id => all ? checked.delete(id) : checked.add(id)); render() };

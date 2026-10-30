@@ -88,6 +88,9 @@ function render() {
     $('flaggedStat').textContent = state.jobs.filter(isFlagged).length;
     $('runStat').textContent = state.running ? 'Processing' : state.jobs.some(j => j.status === 'queued') ? 'Paused' : 'Idle';
     $('modelStatus').textContent = state.settings.model;
+    const total = state.jobs.length, finished = state.jobs.filter(j => !['queued', 'processing'].includes(j.status)).length;
+    const setBar = (key, count) => { const pct = total ? Math.round(count / total * 100) : 0; $('bar' + key).style.width = pct + '%'; $('pct' + key).textContent = pct + '%' };
+    setBar('Total', total); setBar('Ready', state.jobs.filter(j => j.status === 'completed').length); setBar('Flagged', state.jobs.filter(isFlagged).length); setBar('Queue', finished);
     $('start').textContent = state.running ? 'Pause queue' : 'Generate descriptions';
     $('start').disabled = !state.running && !state.jobs.some(j => j.status === 'queued');
     $('queueNote').textContent = state.running ? 'Running. Pause after current video.' : 'One video at a time.';

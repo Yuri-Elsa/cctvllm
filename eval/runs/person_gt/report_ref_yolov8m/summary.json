@@ -1,0 +1,836 @@
+{
+  "reference": "yolo:yolov8m",
+  "recall_target": 0.95,
+  "fpr_targets": [
+    0.1,
+    0.2
+  ],
+  "margin": 0.02,
+  "detectors": {
+    "llm:qwen3-vl:4b-instruct": {
+      "threshold": 0.999719,
+      "target_reached_on_calibration": true,
+      "threshold_best_f1": 0.999993,
+      "invalid": 0,
+      "auc_test": 0.9666360575451485,
+      "ap_test": 0.9795893099564863,
+      "latency": {
+        "median_s": 3.38095,
+        "p95_s": 30.143629999999998,
+        "frames_per_s": 0.1360077310680274
+      },
+      "test": {
+        "recall": {
+          "value": 0.9917355371900827,
+          "ci": [
+            0.9734454013906447,
+            1.0
+          ]
+        },
+        "precision": {
+          "value": 0.9230769230769231,
+          "ci": [
+            0.8310732848232848,
+            0.9924812030075187
+          ]
+        },
+        "fpr": {
+          "value": 0.18518518518518517,
+          "ci": [
+            0.019230769230769232,
+            0.3818881118881115
+          ]
+        },
+        "f1": {
+          "value": 0.9561752988047809,
+          "ci": [
+            0.9029126213592233,
+            0.9929589776420762
+          ]
+        },
+        "video_recall": {
+          "value": 1.0,
+          "ci": [
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "test_counts": {
+        "tp": 120,
+        "fp": 10,
+        "fn": 1,
+        "tn": 44
+      },
+      "fpr_ops": {
+        "0.1": {
+          "threshold": 0.999998,
+          "metrics": {
+            "recall": {
+              "value": 0.9669421487603306,
+              "ci": [
+                0.9320221778031601,
+                0.9924826057681516
+              ]
+            },
+            "precision": {
+              "value": 0.9512195121951219,
+              "ci": [
+                0.8606509721692718,
+                1.0
+              ]
+            },
+            "fpr": {
+              "value": 0.1111111111111111,
+              "ci": [
+                0.0,
+                0.3
+              ]
+            },
+            "f1": {
+              "value": 0.9590163934426229,
+              "ci": [
+                0.9068800178412133,
+                0.9918032786885246
+              ]
+            },
+            "video_recall": {
+              "value": 0.9666666666666667,
+              "ci": [
+                0.8928571428571429,
+                1.0
+              ]
+            }
+          },
+          "counts": {
+            "tp": 117,
+            "fp": 6,
+            "fn": 4,
+            "tn": 48
+          },
+          "delta_vs_reference": {
+            "recall": {
+              "value": 0.0,
+              "ci": [
+                -0.04132231404958675,
+                0.039070189468503894
+              ]
+            },
+            "fpr": {
+              "value": -0.2777777777777778,
+              "ci": [
+                -0.45837500000000003,
+                -0.11106770833333357
+              ]
+            },
+            "video_recall": {
+              "value": -0.033333333333333326,
+              "ci": [
+                -0.1071428571428571,
+                0.0
+              ]
+            }
+          }
+        },
+        "0.2": {
+          "threshold": 0.999978,
+          "metrics": {
+            "recall": {
+              "value": 0.9834710743801653,
+              "ci": [
+                0.9572557471264368,
+                1.0
+              ]
+            },
+            "precision": {
+              "value": 0.937007874015748,
+              "ci": [
+                0.847298884321785,
+                0.9924826057681516
+              ]
+            },
+            "fpr": {
+              "value": 0.14814814814814814,
+              "ci": [
+                0.01694915254237288,
+                0.33930357142857137
+              ]
+            },
+            "f1": {
+              "value": 0.9596774193548386,
+              "ci": [
+                0.9083657038512616,
+                0.9921259842519685
+              ]
+            },
+            "video_recall": {
+              "value": 1.0,
+              "ci": [
+                1.0,
+                1.0
+              ]
+            }
+          },
+          "counts": {
+            "tp": 119,
+            "fp": 8,
+            "fn": 2,
+            "tn": 46
+          },
+          "delta_vs_reference": {
+            "recall": {
+              "value": 0.008264462809917439,
+              "ci": [
+                -0.01786116473616478,
+                0.03496810207336525
+              ]
+            },
+            "fpr": {
+              "value": -0.2962962962962963,
+              "ci": [
+                -0.5,
+                -0.1
+              ]
+            },
+            "video_recall": {
+              "value": 0.0,
+              "ci": [
+                0.0,
+                0.0
+              ]
+            }
+          }
+        }
+      },
+      "recall_noninferior": false,
+      "frozen_comparison_informative": 0.0,
+      "latency_ratio_vs_ref": 9.727952812544956
+    },
+    "yolo:yolov8m": {
+      "threshold": 0.0,
+      "target_reached_on_calibration": true,
+      "threshold_best_f1": 0.082544,
+      "invalid": 0,
+      "auc_test": 0.9522497704315886,
+      "ap_test": 0.978189330091241,
+      "latency": {
+        "median_s": 0.34755,
+        "p95_s": 0.369405,
+        "frames_per_s": 2.865197570721774
+      },
+      "test": {
+        "recall": {
+          "value": 1.0,
+          "ci": [
+            1.0,
+            1.0
+          ]
+        },
+        "precision": {
+          "value": 0.6914285714285714,
+          "ci": [
+            0.5657142857142857,
+            0.805857142857142
+          ]
+        },
+        "fpr": {
+          "value": 1.0,
+          "ci": [
+            1.0,
+            1.0
+          ]
+        },
+        "f1": {
+          "value": 0.8175675675675675,
+          "ci": [
+            0.7226277372262774,
+            0.8924924130495544
+          ]
+        },
+        "video_recall": {
+          "value": 1.0,
+          "ci": [
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "test_counts": {
+        "tp": 121,
+        "fp": 54,
+        "fn": 0,
+        "tn": 0
+      },
+      "fpr_ops": {
+        "0.1": {
+          "threshold": 0.082155,
+          "metrics": {
+            "recall": {
+              "value": 0.9669421487603306,
+              "ci": [
+                0.9339603149851864,
+                0.9920634920634921
+              ]
+            },
+            "precision": {
+              "value": 0.8478260869565217,
+              "ci": [
+                0.7315386156465993,
+                0.9428616636528029
+              ]
+            },
+            "fpr": {
+              "value": 0.3888888888888889,
+              "ci": [
+                0.19044401544401543,
+                0.5853868797308661
+              ]
+            },
+            "f1": {
+              "value": 0.9034749034749036,
+              "ci": [
+                0.8294874676857369,
+                0.9556376731580004
+              ]
+            },
+            "video_recall": {
+              "value": 1.0,
+              "ci": [
+                1.0,
+                1.0
+              ]
+            }
+          },
+          "counts": {
+            "tp": 117,
+            "fp": 21,
+            "fn": 4,
+            "tn": 33
+          }
+        },
+        "0.2": {
+          "threshold": 0.050099,
+          "metrics": {
+            "recall": {
+              "value": 0.9752066115702479,
+              "ci": [
+                0.9464217032967033,
+                1.0
+              ]
+            },
+            "precision": {
+              "value": 0.8309859154929577,
+              "ci": [
+                0.7086371895820714,
+                0.9300940438871472
+              ]
+            },
+            "fpr": {
+              "value": 0.4444444444444444,
+              "ci": [
+                0.23254775747508305,
+                0.6429315476190473
+              ]
+            },
+            "f1": {
+              "value": 0.8973384030418251,
+              "ci": [
+                0.8199980842911876,
+                0.953405017921147
+              ]
+            },
+            "video_recall": {
+              "value": 1.0,
+              "ci": [
+                1.0,
+                1.0
+              ]
+            }
+          },
+          "counts": {
+            "tp": 118,
+            "fp": 24,
+            "fn": 3,
+            "tn": 30
+          }
+        }
+      }
+    },
+    "yolo:yolov8n": {
+      "threshold": 0.0,
+      "target_reached_on_calibration": true,
+      "threshold_best_f1": 0.080972,
+      "invalid": 0,
+      "auc_test": 0.921181512090603,
+      "ap_test": 0.9659934699596882,
+      "latency": {
+        "median_s": 0.0659,
+        "p95_s": 0.07852,
+        "frames_per_s": 14.903208980247925
+      },
+      "test": {
+        "recall": {
+          "value": 1.0,
+          "ci": [
+            1.0,
+            1.0
+          ]
+        },
+        "precision": {
+          "value": 0.6914285714285714,
+          "ci": [
+            0.5657142857142857,
+            0.805857142857142
+          ]
+        },
+        "fpr": {
+          "value": 1.0,
+          "ci": [
+            1.0,
+            1.0
+          ]
+        },
+        "f1": {
+          "value": 0.8175675675675675,
+          "ci": [
+            0.7226277372262774,
+            0.8924924130495544
+          ]
+        },
+        "video_recall": {
+          "value": 1.0,
+          "ci": [
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "test_counts": {
+        "tp": 121,
+        "fp": 54,
+        "fn": 0,
+        "tn": 0
+      },
+      "fpr_ops": {
+        "0.1": {
+          "threshold": 0.312745,
+          "metrics": {
+            "recall": {
+              "value": 0.7768595041322314,
+              "ci": [
+                0.6728851111827263,
+                0.8673469387755102
+              ]
+            },
+            "precision": {
+              "value": 0.9690721649484536,
+              "ci": [
+                0.9125,
+                1.0
+              ]
+            },
+            "fpr": {
+              "value": 0.05555555555555555,
+              "ci": [
+                0.0,
+                0.1285829493087557
+              ]
+            },
+            "f1": {
+              "value": 0.8623853211009175,
+              "ci": [
+                0.7868733089288555,
+                0.9191612841945288
+              ]
+            },
+            "video_recall": {
+              "value": 0.9666666666666667,
+              "ci": [
+                0.896551724137931,
+                1.0
+              ]
+            }
+          },
+          "counts": {
+            "tp": 94,
+            "fp": 3,
+            "fn": 27,
+            "tn": 51
+          },
+          "delta_vs_reference": {
+            "recall": {
+              "value": -0.1900826446280992,
+              "ci": [
+                -0.29366246498599446,
+                -0.1031376109765942
+              ]
+            },
+            "fpr": {
+              "value": -0.33333333333333337,
+              "ci": [
+                -0.5106501182033097,
+                -0.163265306122449
+              ]
+            },
+            "video_recall": {
+              "value": -0.033333333333333326,
+              "ci": [
+                -0.10344827586206895,
+                0.0
+              ]
+            }
+          }
+        },
+        "0.2": {
+          "threshold": 0.164922,
+          "metrics": {
+            "recall": {
+              "value": 0.8677685950413223,
+              "ci": [
+                0.7906854773133842,
+                0.9327731092436975
+              ]
+            },
+            "precision": {
+              "value": 0.9051724137931034,
+              "ci": [
+                0.7984425005333902,
+                0.9823047663406302
+              ]
+            },
+            "fpr": {
+              "value": 0.2037037037037037,
+              "ci": [
+                0.05,
+                0.3889492753623185
+              ]
+            },
+            "f1": {
+              "value": 0.8860759493670886,
+              "ci": [
+                0.8168824606833829,
+                0.9407121944078466
+              ]
+            },
+            "video_recall": {
+              "value": 1.0,
+              "ci": [
+                1.0,
+                1.0
+              ]
+            }
+          },
+          "counts": {
+            "tp": 105,
+            "fp": 11,
+            "fn": 16,
+            "tn": 43
+          },
+          "delta_vs_reference": {
+            "recall": {
+              "value": -0.1074380165289256,
+              "ci": [
+                -0.18840876692801145,
+                -0.03875223613595717
+              ]
+            },
+            "fpr": {
+              "value": -0.24074074074074073,
+              "ci": [
+                -0.36487785862785854,
+                -0.1111111111111111
+              ]
+            },
+            "video_recall": {
+              "value": 0.0,
+              "ci": [
+                0.0,
+                0.0
+              ]
+            }
+          }
+        }
+      },
+      "recall_noninferior": true,
+      "frozen_comparison_informative": 0.0,
+      "latency_ratio_vs_ref": 0.1896130053229751
+    },
+    "yolo:yolov8s": {
+      "threshold": 0.0,
+      "target_reached_on_calibration": true,
+      "threshold_best_f1": 0.138485,
+      "invalid": 0,
+      "auc_test": 0.918885827976737,
+      "ap_test": 0.9661761090034974,
+      "latency": {
+        "median_s": 0.14595,
+        "p95_s": 0.16954000000000002,
+        "frames_per_s": 6.703728709675874
+      },
+      "test": {
+        "recall": {
+          "value": 1.0,
+          "ci": [
+            1.0,
+            1.0
+          ]
+        },
+        "precision": {
+          "value": 0.6914285714285714,
+          "ci": [
+            0.5657142857142857,
+            0.805857142857142
+          ]
+        },
+        "fpr": {
+          "value": 1.0,
+          "ci": [
+            1.0,
+            1.0
+          ]
+        },
+        "f1": {
+          "value": 0.8175675675675675,
+          "ci": [
+            0.7226277372262774,
+            0.8924924130495544
+          ]
+        },
+        "video_recall": {
+          "value": 1.0,
+          "ci": [
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "test_counts": {
+        "tp": 121,
+        "fp": 54,
+        "fn": 0,
+        "tn": 0
+      },
+      "fpr_ops": {
+        "0.1": {
+          "threshold": 0.204564,
+          "metrics": {
+            "recall": {
+              "value": 0.8677685950413223,
+              "ci": [
+                0.8086617471080974,
+                0.9217391304347826
+              ]
+            },
+            "precision": {
+              "value": 0.9051724137931034,
+              "ci": [
+                0.8210218112849692,
+                0.968
+              ]
+            },
+            "fpr": {
+              "value": 0.2037037037037037,
+              "ci": [
+                0.08196721311475409,
+                0.3333333333333333
+              ]
+            },
+            "f1": {
+              "value": 0.8860759493670886,
+              "ci": [
+                0.8279069767441861,
+                0.9333333333333332
+              ]
+            },
+            "video_recall": {
+              "value": 1.0,
+              "ci": [
+                1.0,
+                1.0
+              ]
+            }
+          },
+          "counts": {
+            "tp": 105,
+            "fp": 11,
+            "fn": 16,
+            "tn": 43
+          },
+          "delta_vs_reference": {
+            "recall": {
+              "value": -0.09917355371900827,
+              "ci": [
+                -0.1538659793814433,
+                -0.05217391304347829
+              ]
+            },
+            "fpr": {
+              "value": -0.1851851851851852,
+              "ci": [
+                -0.3061306780776827,
+                -0.06894592476489039
+              ]
+            },
+            "video_recall": {
+              "value": 0.0,
+              "ci": [
+                0.0,
+                0.0
+              ]
+            }
+          }
+        },
+        "0.2": {
+          "threshold": 0.079919,
+          "metrics": {
+            "recall": {
+              "value": 0.9256198347107438,
+              "ci": [
+                0.8842975206611571,
+                0.964293615676359
+              ]
+            },
+            "precision": {
+              "value": 0.8175182481751825,
+              "ci": [
+                0.6991491775382871,
+                0.9194765100671141
+              ]
+            },
+            "fpr": {
+              "value": 0.46296296296296297,
+              "ci": [
+                0.2567103868574457,
+                0.6551865460712266
+              ]
+            },
+            "f1": {
+              "value": 0.868217054263566,
+              "ci": [
+                0.7901072124756335,
+                0.9277702848123969
+              ]
+            },
+            "video_recall": {
+              "value": 1.0,
+              "ci": [
+                1.0,
+                1.0
+              ]
+            }
+          },
+          "counts": {
+            "tp": 112,
+            "fp": 25,
+            "fn": 9,
+            "tn": 29
+          },
+          "delta_vs_reference": {
+            "recall": {
+              "value": -0.04958677685950408,
+              "ci": [
+                -0.0869670747150697,
+                -0.017094017094017033
+              ]
+            },
+            "fpr": {
+              "value": 0.018518518518518545,
+              "ci": [
+                -0.10771739130434789,
+                0.1538461538461538
+              ]
+            },
+            "video_recall": {
+              "value": 0.0,
+              "ci": [
+                0.0,
+                0.0
+              ]
+            }
+          }
+        }
+      },
+      "recall_noninferior": true,
+      "frozen_comparison_informative": 0.0,
+      "latency_ratio_vs_ref": 0.41993957703927487
+    }
+  },
+  "deltas_vs_reference": {
+    "llm:qwen3-vl:4b-instruct": {
+      "recall": {
+        "value": -0.008264462809917328,
+        "ci": [
+          -0.026554598609355287,
+          0.0
+        ]
+      },
+      "fpr": {
+        "value": -0.8148148148148149,
+        "ci": [
+          -0.9807692307692307,
+          -0.6181118881118884
+        ]
+      },
+      "video_recall": {
+        "value": 0.0,
+        "ci": [
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "yolo:yolov8n": {
+      "recall": {
+        "value": 0.0,
+        "ci": [
+          0.0,
+          0.0
+        ]
+      },
+      "fpr": {
+        "value": 0.0,
+        "ci": [
+          0.0,
+          0.0
+        ]
+      },
+      "video_recall": {
+        "value": 0.0,
+        "ci": [
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "yolo:yolov8s": {
+      "recall": {
+        "value": 0.0,
+        "ci": [
+          0.0,
+          0.0
+        ]
+      },
+      "fpr": {
+        "value": 0.0,
+        "ci": [
+          0.0,
+          0.0
+        ]
+      },
+      "video_recall": {
+        "value": 0.0,
+        "ci": [
+          0.0,
+          0.0
+        ]
+      }
+    }
+  },
+  "notes": [
+    "llm:qwen3-vl:4b-cctv: tidak punya satu pun skor valid (semua panggilan gagal) dan dikeluarkan dari analisis.",
+    "llm:qwen3-vl:4b-instruct: threshold terpilih 0.999719 berada di ekor jenuh (probabilitas mendekati 1). Nilai sedekat itu rapuh terhadap perubahan model, kuantisasi atau perangkat; jangan salin ke Settings tanpa memeriksa kurva (curve_*.csv) dan titik yang lebih longgar.",
+    "yolo:yolov8m: pada target recall 95% threshold yang terpilih meloloskan hampir semua frame (FPR 1.000). Ada frame berisi orang yang tidak mendapat skor di atas lantai pencatatan, jadi target itu hanya tercapai tanpa gate yang berguna. Bandingkan pada FPR yang disamakan, bukan pada threshold beku ini.",
+    "yolo:yolov8n: pada target recall 95% threshold yang terpilih meloloskan hampir semua frame (FPR 1.000). Ada frame berisi orang yang tidak mendapat skor di atas lantai pencatatan, jadi target itu hanya tercapai tanpa gate yang berguna. Bandingkan pada FPR yang disamakan, bukan pada threshold beku ini.",
+    "yolo:yolov8s: pada target recall 95% threshold yang terpilih meloloskan hampir semua frame (FPR 1.000). Ada frame berisi orang yang tidak mendapat skor di atas lantai pencatatan, jadi target itu hanya tercapai tanpa gate yang berguna. Bandingkan pada FPR yang disamakan, bukan pada threshold beku ini."
+  ]
+}

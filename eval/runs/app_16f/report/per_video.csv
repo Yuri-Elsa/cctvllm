@@ -1,0 +1,113 @@
+clip_id,class_name,evaluation_split,stratum,expected_suspicious,status,invalid_reason,suspicious,weapon,no_people,n_frames,app_elapsed_seconds,wall_seconds,app_duration_sec,manifest_span_sec,span_mismatch,model,error,description
+abuse008x264,Abuse,test,main,True,completed,,no,no,False,16.0,94.1,94.78,280.26,280.2,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan di dalam ruangan.
+abuse015x264,Abuse,test,main,True,completed,,yes,no,False,16.0,79.3,82.53,262.5,262.5,False,gemma4:e2b-it-qat,,"Seseorang terlihat diam dalam beberapa frame, kemudian seseorang bergerak berlari."
+abuse020x264,Abuse,test,main,True,completed,,no,no,False,16.0,53.2,54.73,103.49000000000001,103.47,False,gemma4:e2b-it-qat,,"Seseorang terlihat berdiri di dekat meja, kemudian seseorang bergerak cepat sambil berlari."
+abuse041x264,Abuse,test,main,True,completed,,no,no,False,16.0,42.3,44.37,46.17,46.17,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan sambil satu orang lain berdiri di dalam ruangan.
+abuse046x264,Abuse,test,main,True,completed,,no,no,False,16.0,39.9,42.41,38.77,38.63,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan di dekat dinding.
+abuse048x264,Abuse,test,main,True,completed,,no,no,False,16.0,52.7,54.56,114.00999999999999,113.87,False,gemma4:e2b-it-qat,,Seseorang terlihat berdiri di dalam ruangan.
+abuse050x264,Abuse,test,main,True,completed,,no,no,False,16.0,66.5,68.56,162.07,162.07,False,gemma4:e2b-it-qat,,"Seseorang terlihat diam, kemudian seseorang bergerak perlahan, dan kemudian seseorang bergerak perlahan."
+arrest001x264,Arrest,test,main,True,completed,,yes,no,False,16.0,48.9,50.44,79.15,79.13,False,gemma4:e2b-it-qat,,"Seseorang terlihat diam, kemudian seseorang lain terlihat diam, dan kemudian seseorang ketiga terlihat diam."
+arrest011x264,Arrest,test,main,True,completed,,no,no,False,16.0,50.4,52.38,73.85,73.8,False,gemma4:e2b-it-qat,,"Satu orang terlihat diam di area tersebut, sementara satu orang bergerak berjalan."
+arrest012x264,Arrest,test,main,True,upload_rejected,upload_rejected,,,False,,,1.07,,,False,,Video exceeds the 5-minute limit.,
+arrest018x264,Arrest,test,main,True,completed,,no,no,False,16.0,86.3,87.52,81.18,81.13,False,gemma4:e2b-it-qat,,"Seseorang terlihat berjalan di area jalan yang tampak basah, kemudian seseorang bergerak bergegas."
+arrest020x264,Arrest,test,main,True,completed,,no,no,False,16.0,61.9,62.77,98.08,98.07,False,gemma4:e2b-it-qat,,Satu orang terlihat berjalan di dalam ruangan.
+arrest024x264,Arrest,test,main,True,completed,,no,no,False,16.0,51.1,52.52,120.99,120.97,False,gemma4:e2b-it-qat,,Satu orang terlihat berjalan di jalan raya.
+arrest026x264,Arrest,test,main,True,completed,,no,no,False,16.0,67.4,68.78,216.2,216.2,False,gemma4:e2b-it-qat,,"Seseorang terlihat berdiri di dalam ruangan, kemudian seseorang berjalan."
+arson011x264,Arson,test,person_optional,True,completed,,yes,no,False,16.0,37.7,38.41,42.21,42.2,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan.
+arson016x264,Arson,test,person_optional,True,completed,,no,no,False,16.0,39.8,40.45,59.85,59.83,False,gemma4:e2b-it-qat,,Seseorang terlihat duduk di dalam mobil.
+arson032x264,Arson,test,person_optional,True,completed,,no,no,False,16.0,43.7,44.59,92.74000000000001,92.7,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan di dalam ruangan.
+arson045x264,Arson,test,person_optional,True,completed,,no,no,False,16.0,49.4,50.66,125.11,125.1,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan.
+arson046x264,Arson,test,person_optional,True,completed,,no,no,False,4.0,25.5,26.36,69.13,69.1,False,gemma4:e2b-it-qat,,Seseorang terlihat berdiri di pinggir jalan.
+arson051x264,Arson,test,person_optional,True,completed,,no,no,False,5.0,23.1,24.3,35.27,35.2,False,gemma4:e2b-it-qat,,Seseorang terlihat berada di dalam ruangan.
+arson052x264,Arson,test,person_optional,True,completed,,no,no,False,16.0,61.6,62.58,158.87,158.87,False,gemma4:e2b-it-qat,,"Seseorang terlihat diam di dalam ruangan, kemudian bergerak berjalan."
+assault018x264,Assault,test,main,True,completed,,no,no,False,6.0,27.9,31.23,12.52,12.03,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan mendekati sebuah van berwarna putih.
+assault025x264,Assault,test,main,True,completed,,yes,no,False,16.0,49.3,50.45,38.82,38.67,False,gemma4:e2b-it-qat,,"Beberapa orang terlihat berdiri di area tersebut, sementara satu orang berjalan, dan satu orang lain berlari kencang."
+assault026x264,Assault,test,main,True,completed,,no,no,False,16.0,39.0,40.33,28.19,28.07,False,gemma4:e2b-it-qat,,"Seseorang terlihat berjalan dengan kecepatan tinggi, kemudian seseorang lain juga terlihat berjalan."
+assault031x264,Assault,test,main,True,completed,,yes,no,False,16.0,39.7,40.37,25.22,25.2,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan sambil bergerak perlahan.
+assault037x264,Assault,test,main,True,completed,,no,no,False,16.0,56.0,56.51,106.95,106.93,False,gemma4:e2b-it-qat,,"Seseorang terlihat diam, kemudian bergerak perlahan, kemudian berhenti, dan kemudian bergerak perlahan lagi."
+assault048x264,Assault,test,main,True,completed,,no,no,False,16.0,52.8,54.51,60.04,60.03,False,gemma4:e2b-it-qat,,"Satu orang terlihat diam di dekat mobil berwarna biru, sementara satu orang berjalan mendekati area tersebut, dan satu orang berlari kencang."
+assault052x264,Assault,test,main,True,completed,,no,no,False,16.0,38.7,40.41,26.33,26.3,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan di pinggir jalan.
+burglary029x264,Burglary,test,main,True,completed,,no,no,False,16.0,59.5,60.55,167.42000000000002,167.37,False,gemma4:e2b-it-qat,,"Seseorang berdiri di depan meja dapur, kemudian seseorang berdiri."
+burglary031x264,Burglary,test,main,True,completed,,no,no,False,16.0,64.6,66.64,208.57999999999998,208.57,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan di dalam area toko.
+burglary045x264,Burglary,test,main,True,upload_rejected,upload_rejected,,,False,,,0.35,,,False,,Video exceeds the 5-minute limit.,
+burglary049x264,Burglary,test,main,True,upload_rejected,upload_rejected,,,False,,,0.26,,,False,,Video exceeds the 5-minute limit.,
+burglary051x264,Burglary,test,main,True,completed,,no,no,False,16.0,39.3,40.43,42.1,42.07,False,gemma4:e2b-it-qat,,Seseorang terlihat berdiri.
+burglary078x264,Burglary,test,main,True,completed,,no,no,False,10.0,26.8,28.33,10.03,10.0,False,gemma4:e2b-it-qat,,Seseorang berdiri di dalam ruangan.
+burglary095x264,Burglary,test,main,True,upload_rejected,upload_rejected,,,False,,,0.84,,,False,,Video exceeds the 5-minute limit.,
+explosion006x264,Explosion,test,person_optional,True,completed,,no,no,False,16.0,41.7,42.51,64.02,64.0,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan di jalan raya.
+explosion008x264,Explosion,test,person_optional,True,completed,,no,no,True,0.0,16.7,18.34,58.38,58.27,False,Person detection only,,"Tidak ada orang terdeteksi pada frame yang diperiksa, sehingga tidak ada gambar yang dikirim ke model."
+explosion016x264,Explosion,test,person_optional,True,completed,,no,no,True,0.0,13.1,14.34,32.14,32.1,False,Person detection only,,"Tidak ada orang terdeteksi pada frame yang diperiksa, sehingga tidak ada gambar yang dikirim ke model."
+explosion021x264,Explosion,test,person_optional,True,completed,,no,no,True,0.0,12.5,14.3,26.22,26.07,False,Person detection only,,"Tidak ada orang terdeteksi pada frame yang diperiksa, sehingga tidak ada gambar yang dikirim ke model."
+explosion027x264,Explosion,test,person_optional,True,completed,,yes,no,False,16.0,35.7,36.42,25.87,25.87,False,gemma4:e2b-it-qat,,Seseorang terlihat berdiri di dalam ruangan.
+explosion032x264,Explosion,test,person_optional,True,completed,,no,no,False,6.0,28.3,30.44,70.66,70.6,False,gemma4:e2b-it-qat,,Seseorang terlihat berdiri di area parkir.
+explosion040x264,Explosion,test,person_optional,True,completed,,yes,no,False,16.0,55.6,56.63,152.46,152.37,False,gemma4:e2b-it-qat,,"Seseorang terlihat berjalan, kemudian berlari kencang, dan kemudian bergegas."
+fighting002x264,Fighting,test,main,True,completed,,no,no,False,9.0,33.7,34.47,89.65,89.6,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan.
+fighting007x264,Fighting,test,main,True,completed,,no,no,False,16.0,57.7,58.63,126.47,126.47,False,gemma4:e2b-it-qat,,"Satu orang terlihat berdiri, sementara satu orang bergerak perlahan, dan satu orang berlari kencang."
+fighting013x264,Fighting,test,main,True,completed,,no,no,False,16.0,38.5,40.42,47.8,47.8,False,gemma4:e2b-it-qat,,Seseorang terlihat berdiri.
+fighting016x264,Fighting,test,main,True,completed,,no,no,False,16.0,46.9,48.58,96.83,96.77,False,gemma4:e2b-it-qat,,Seseorang terlihat berdiri.
+fighting017x264,Fighting,test,main,True,completed,,no,no,False,16.0,44.2,46.5,69.27,69.27,False,gemma4:e2b-it-qat,,"Satu orang terlihat berjalan di sisi kiri jalan, sementara orang lain terlihat berjalan di tengah jalan."
+fighting023x264,Fighting,test,main,True,completed,,no,no,False,15.0,35.6,36.38,34.17,34.17,False,gemma4:e2b-it-qat,,Seseorang terlihat berlari kencang di dalam ruangan.
+fighting051x264,Fighting,test,main,True,completed,,no,no,False,16.0,69.0,70.93,220.27,220.27,False,gemma4:e2b-it-qat,,Seseorang terlihat berdiri di dalam ruangan.
+normalvideos010x264,Normal,test,main,False,completed,,no,no,False,16.0,38.9,40.46,35.12,35.1,False,gemma4:e2b-it-qat,,Seseorang terlihat berdiri di dalam ruangan.
+normalvideos062x264,Normal,test,main,False,completed,,yes,no,False,16.0,51.2,52.52,52.45,52.43,False,gemma4:e2b-it-qat,,"Satu orang berjalan sambil bergerak perlahan, satu orang berjalan, dan beberapa orang lain diam di sekitar kendaraan. Kemudian, satu orang berlari kencang, diikuti oleh satu orang yang berlari."
+normalvideos109x264,Normal,test,main,False,completed,,no,no,False,16.0,41.4,42.53,57.42,57.4,False,gemma4:e2b-it-qat,,"Seseorang berdiri di dalam ruangan, kemudian seseorang berjalan."
+normalvideos204x264,Normal,test,main,False,completed,,no,no,False,16.0,42.6,44.5,27.49,27.47,False,gemma4:e2b-it-qat,,"Beberapa orang terlihat berjalan mendekati mobil yang diparkir, sementara beberapa orang lain terlihat berjalan dan berdiri di sekitar area tersebut."
+normalvideos226x264,Normal,test,main,False,upload_rejected,upload_rejected,,,False,,,0.63,,,False,,Video exceeds the 5-minute limit.,
+normalvideos255x264,Normal,test,main,False,completed,,yes,no,False,16.0,54.7,56.78,120.0,120.0,False,gemma4:e2b-it-qat,,"Seseorang terlihat berdiri di dekat meja yang terdapat beberapa barang, kemudian seseorang berlari kencang."
+normalvideos314x264,Normal,test,main,False,completed,,no,no,False,16.0,38.9,40.48,37.83,37.83,False,gemma4:e2b-it-qat,,Tiga orang terlihat berdiri di dalam ruangan.
+normalvideos323x264,Normal,test,main,False,upload_rejected,upload_rejected,,,False,,,0.0,,,False,,File is 503 MB; the app accepts at most 500 MB (rejected before upload).,
+normalvideos395x264,Normal,test,main,False,completed,,no,no,True,0.0,16.8,18.44,16.02,16.0,False,Person detection only,,"Tidak ada orang terdeteksi pada frame yang diperiksa, sehingga tidak ada gambar yang dikirim ke model."
+normalvideos420x264,Normal,test,main,False,upload_rejected,upload_rejected,,,False,,,0.77,,,False,,Video exceeds the 5-minute limit.,
+normalvideos523x264,Normal,test,main,False,completed,,no,no,False,15.0,78.4,80.46,14.07,14.07,False,gemma4:e2b-it-qat,,"Seseorang berdiri di area kasir, kemudian seseorang bergerak cepat mendekati area tersebut."
+normalvideos547x264,Normal,test,main,False,upload_rejected,upload_rejected,,,False,,,0.0,,,False,,File is 1337 MB; the app accepts at most 500 MB (rejected before upload).,
+normalvideos633x264,Normal,test,main,False,upload_rejected,upload_rejected,,,False,,,0.0,,,False,,File is 2638 MB; the app accepts at most 500 MB (rejected before upload).,
+normalvideos662x264,Normal,test,main,False,completed,,no,no,False,15.0,55.2,56.62,16.57,16.57,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan di area yang tampak seperti koridor atau lorong dengan pagar logam.
+normalvideos750x264,Normal,test,main,False,completed,,yes,no,False,16.0,44.8,46.66,35.05,35.03,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan di area tersebut.
+normalvideos794x264,Normal,test,main,False,completed,,no,no,False,1.0,34.2,36.55,150.8,150.8,False,gemma4:e2b-it-qat,,Seseorang terlihat berdiri di area luar bangunan.
+normalvideos795x264,Normal,test,main,False,upload_rejected,upload_rejected,,,False,,,0.79,,,False,,Video exceeds the 5-minute limit.,
+normalvideos811x264,Normal,test,main,False,completed,,no,no,False,16.0,60.3,62.46,90.49,90.47,False,gemma4:e2b-it-qat,,"Beberapa orang terlihat berjalan di area luar bangunan, dan satu orang berlari kencang."
+normalvideos818x264,Normal,test,main,False,completed,,no,no,False,16.0,49.1,50.36,21.97,21.97,False,gemma4:e2b-it-qat,,"Satu orang berdiri, satu orang berjalan, satu orang berlari kencang, dan satu orang berjalan."
+normalvideos921x264,Normal,test,main,False,completed,,no,no,False,15.0,42.8,44.46,57.43,57.43,False,gemma4:e2b-it-qat,,Satu orang terlihat berjalan di jalan raya.
+normalvideos948x264,Normal,test,main,False,completed,,no,no,False,16.0,58.1,58.63,119.86,119.83,False,gemma4:e2b-it-qat,,"Seseorang terlihat berdiri, kemudian bergerak perlahan, lalu berhenti, dan kemudian bergerak perlahan lagi."
+roadaccidents004x264,RoadAccidents,test,person_optional,True,completed,,yes,no,False,3.0,17.1,18.32,12.97,12.97,False,gemma4:e2b-it-qat,,Seseorang terlihat berlari kencang menjauhi area parkir.
+roadaccidents028x264,RoadAccidents,test,person_optional,True,completed,,no,no,False,16.0,40.6,42.36,19.7,19.7,False,gemma4:e2b-it-qat,,"Seseorang terlihat berdiri di area terbuka, kemudian seseorang terlihat berjalan."
+roadaccidents082x264,RoadAccidents,test,person_optional,True,completed,,no,no,False,5.0,24.4,26.35,45.63,45.63,False,gemma4:e2b-it-qat,,Satu orang terlihat berada di area tersebut.
+roadaccidents083x264,RoadAccidents,test,person_optional,True,completed,,no,no,False,2.0,18.9,20.39,39.98,39.97,False,gemma4:e2b-it-qat,,Seseorang terlihat berdiri di area taman.
+roadaccidents092x264,RoadAccidents,test,person_optional,True,completed,,no,no,False,16.0,45.0,46.47,56.63,56.63,False,gemma4:e2b-it-qat,,Seseorang terlihat berdiri di area rumput.
+roadaccidents111x264,RoadAccidents,test,person_optional,True,completed,,no,no,False,16.0,43.4,44.43,41.14,41.1,False,gemma4:e2b-it-qat,,Seseorang terlihat berdiri di dalam ruangan.
+roadaccidents130x264,RoadAccidents,test,person_optional,True,completed,,yes,no,False,16.0,43.9,44.5,42.59,42.57,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan di area jalan.
+robbery007x264,Robbery,test,main,True,completed,,no,no,False,16.0,45.6,46.4,68.8,68.8,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan.
+robbery016x264,Robbery,test,main,True,completed,,yes,no,False,16.0,47.3,48.57,55.1,55.1,False,gemma4:e2b-it-qat,,"Seseorang terlihat berdiri di dekat rak berisi barang, kemudian seseorang berjalan."
+robbery018x264,Robbery,test,main,True,completed,,yes,no,False,16.0,54.2,56.59,95.97,95.97,False,gemma4:e2b-it-qat,,"Seseorang terlihat berdiri, kemudian bergerak perlahan."
+robbery071x264,Robbery,test,main,True,completed,,yes,no,False,16.0,45.9,46.46,52.19,52.07,False,gemma4:e2b-it-qat,,Seseorang terlihat berdiri di dalam toko.
+robbery074x264,Robbery,test,main,True,completed,,no,no,False,16.0,40.4,42.42,26.15,26.13,False,gemma4:e2b-it-qat,,Seseorang terlihat berdiri di dalam ruangan.
+robbery142x264,Robbery,test,main,True,completed,,no,no,False,16.0,49.8,50.52,83.5,83.43,False,gemma4:e2b-it-qat,,Seseorang berdiri di dalam toko.
+robbery148x264,Robbery,test,main,True,completed,,no,no,False,16.0,57.8,58.7,120.47,120.37,False,gemma4:e2b-it-qat,,"Seseorang terlihat berdiri di area yang tampak seperti jalan, kemudian seseorang bergerak berjalan."
+shooting004x264,Shooting,test,main,True,completed,,no,no,False,16.0,47.1,48.47,59.77,59.77,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan di dalam mobil berwarna hijau yang bergerak di jalan.
+shooting009x264,Shooting,test,main,True,completed,,no,no,False,16.0,62.5,64.66,172.2,172.2,False,gemma4:e2b-it-qat,,Seseorang terlihat berdiri di dalam ruangan.
+shooting020x264,Shooting,test,main,True,completed,,no,no,False,16.0,63.4,65.02,169.74,169.73,False,gemma4:e2b-it-qat,,Seseorang terlihat berlari kencang.
+shooting028x264,Shooting,test,main,True,completed,,no,no,False,14.0,45.5,46.38,63.31,63.27,False,gemma4:e2b-it-qat,,"Seseorang berdiri di dekat meja kayu, kemudian seseorang berjalan sambil bergerak mendekati area lain."
+shooting034x264,Shooting,test,main,True,completed,,no,no,False,11.0,29.0,30.27,47.04,46.97,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan di area jalan.
+shooting050x264,Shooting,test,main,True,completed,,no,no,False,16.0,61.8,62.45,127.71,127.6,False,gemma4:e2b-it-qat,,"Satu orang terlihat berjalan di area lapangan sepak bola, sementara satu orang lain berdiri di dekat area tersebut."
+shooting053x264,Shooting,test,main,True,completed,,no,no,False,13.0,86.3,88.8,30.75,30.63,False,gemma4:e2b-it-qat,,Seseorang terlihat berdiri.
+shoplifting010x264,Shoplifting,test,main,True,completed,,no,no,False,16.0,97.9,98.59,91.2,91.2,False,gemma4:e2b-it-qat,,Seseorang terlihat berdiri di area yang tampak seperti toko atau supermarket.
+shoplifting021x264,Shoplifting,test,main,True,completed,,no,no,False,16.0,58.8,60.57,118.39,118.37,False,gemma4:e2b-it-qat,,Seseorang terlihat berdiri di dalam ruangan.
+shoplifting022x264,Shoplifting,test,main,True,completed,,no,no,False,16.0,66.7,68.46,73.05,73.03,False,gemma4:e2b-it-qat,,Seseorang terlihat berdiri di antara rak-rak toko.
+shoplifting044x264,Shoplifting,test,main,True,upload_rejected,upload_rejected,,,False,,,0.79,,,False,,Video exceeds the 5-minute limit.,
+shoplifting051x264,Shoplifting,test,main,True,completed,,no,no,False,16.0,97.9,99.03,240.62,240.6,False,gemma4:e2b-it-qat,,"Seseorang berdiri diam, kemudian seseorang bergerak berjalan."
+shoplifting054x264,Shoplifting,test,main,True,completed,,no,no,False,16.0,62.8,64.35,34.2,34.17,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan mendekati meja yang memiliki beberapa benda.
+shoplifting055x264,Shoplifting,test,main,True,completed,,no,no,False,16.0,67.2,68.51,225.67000000000002,225.67,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan di luar pintu.
+stealing002x264,Stealing,test,main,True,completed,,no,no,False,16.0,56.7,58.37,117.22999999999999,117.23,False,gemma4:e2b-it-qat,,Satu orang terlihat berjalan di dekat mobil putih yang terparkir di pinggir jalan.
+stealing003x264,Stealing,test,main,True,completed,,no,no,False,16.0,108.6,110.5,119.2,119.2,False,gemma4:e2b-it-qat,,Tidak ada tindakan yang dapat ditentukan.
+stealing014x264,Stealing,test,main,True,completed,,no,no,False,16.0,99.7,100.64,112.17,112.17,False,gemma4:e2b-it-qat,,Seseorang berdiri di samping sebuah mobil sedan berwarna perak.
+stealing057x264,Stealing,test,main,True,completed,,no,no,False,16.0,75.3,76.42,100.6,100.5,False,gemma4:e2b-it-qat,,"Satu orang terlihat berdiri, sementara orang lain juga terlihat berdiri."
+stealing078x264,Stealing,test,main,True,completed,,no,no,False,16.0,49.7,50.36,86.21000000000001,86.2,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan mendekati sepeda.
+stealing096x264,Stealing,test,main,True,completed,,no,no,False,16.0,64.0,66.54,220.3,220.27,False,gemma4:e2b-it-qat,,Seseorang terlihat berdiri di dalam ruangan.
+stealing111x264,Stealing,test,main,True,completed,,no,no,False,11.0,44.2,46.35,157.07,157.07,False,gemma4:e2b-it-qat,,Seseorang terlihat berada di dalam mobil yang diparkir.
+vandalism002x264,Vandalism,test,main,True,completed,,yes,no,False,16.0,57.6,58.38,61.37,61.37,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan di area terbuka.
+vandalism004x264,Vandalism,test,main,True,completed,,no,no,False,16.0,102.6,104.52,94.0,94.0,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan di pinggir jalan.
+vandalism021x264,Vandalism,test,main,True,completed,,no,no,False,16.0,93.5,94.46,45.5,45.4,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan di dalam area yang tampak seperti dapur atau ruang komersial.
+vandalism025x264,Vandalism,test,main,True,completed,,no,no,False,16.0,66.1,68.54,143.48,143.47,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan di area teras bangunan.
+vandalism028x264,Vandalism,test,main,True,completed,,no,no,False,7.0,33.8,34.44,149.93,149.83,False,gemma4:e2b-it-qat,,Seseorang terlihat berdiri di dekat kendaraan.
+vandalism031x264,Vandalism,test,main,True,completed,,no,no,False,16.0,63.4,64.47,59.98,59.97,False,gemma4:e2b-it-qat,,Seseorang terlihat berdiri di dalam area yang tampak seperti pasar atau toko.
+vandalism034x264,Vandalism,test,main,True,completed,,no,no,False,16.0,56.7,58.42,58.54,58.53,False,gemma4:e2b-it-qat,,Seseorang terlihat berjalan di area dek kapal.

@@ -1,0 +1,1 @@
+clip_id,class_name,evaluation_split,stratum,expected_suspicious,status,invalid_reason,suspicious,weapon,no_people,n_frames,app_elapsed_seconds,wall_seconds,app_duration_sec,manifest_span_sec,span_mismatch,model,error,raw_text

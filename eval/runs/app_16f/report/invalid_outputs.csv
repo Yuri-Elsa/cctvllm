@@ -1,0 +1,12 @@
+clip_id,class_name,evaluation_split,stratum,expected_suspicious,status,invalid_reason,suspicious,weapon,no_people,n_frames,app_elapsed_seconds,wall_seconds,app_duration_sec,manifest_span_sec,span_mismatch,model,error,raw_text
+arrest012x264,Arrest,test,main,True,upload_rejected,upload_rejected,,,False,,,1.07,,,False,,Video exceeds the 5-minute limit.,
+burglary045x264,Burglary,test,main,True,upload_rejected,upload_rejected,,,False,,,0.35,,,False,,Video exceeds the 5-minute limit.,
+burglary049x264,Burglary,test,main,True,upload_rejected,upload_rejected,,,False,,,0.26,,,False,,Video exceeds the 5-minute limit.,
+burglary095x264,Burglary,test,main,True,upload_rejected,upload_rejected,,,False,,,0.84,,,False,,Video exceeds the 5-minute limit.,
+normalvideos226x264,Normal,test,main,False,upload_rejected,upload_rejected,,,False,,,0.63,,,False,,Video exceeds the 5-minute limit.,
+normalvideos323x264,Normal,test,main,False,upload_rejected,upload_rejected,,,False,,,0.0,,,False,,File is 503 MB; the app accepts at most 500 MB (rejected before upload).,
+normalvideos420x264,Normal,test,main,False,upload_rejected,upload_rejected,,,False,,,0.77,,,False,,Video exceeds the 5-minute limit.,
+normalvideos547x264,Normal,test,main,False,upload_rejected,upload_rejected,,,False,,,0.0,,,False,,File is 1337 MB; the app accepts at most 500 MB (rejected before upload).,
+normalvideos633x264,Normal,test,main,False,upload_rejected,upload_rejected,,,False,,,0.0,,,False,,File is 2638 MB; the app accepts at most 500 MB (rejected before upload).,
+normalvideos795x264,Normal,test,main,False,upload_rejected,upload_rejected,,,False,,,0.79,,,False,,Video exceeds the 5-minute limit.,
+shoplifting044x264,Shoplifting,test,main,True,upload_rejected,upload_rejected,,,False,,,0.79,,,False,,Video exceeds the 5-minute limit.,

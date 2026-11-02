@@ -34,4 +34,14 @@ paths.txt
 benchmark/
 Ultralytics/
 tracking/.config/ 
-eval/runs/
+yolov8m.pt
+yolov8s.pt
+
+# eval runs: scratch and partial runs, and bulky or raw files, are not committed
+eval/runs/cek/
+eval/runs/smoke/
+eval/runs/qwen4b_16f/
+eval/runs/qwen4b_instruct_batch/
+eval/runs/**/attempts.jsonl
+eval/runs/**/frames/
+eval/runs/**/*.tmp

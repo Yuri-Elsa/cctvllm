@@ -45,7 +45,7 @@ public static class Calibration
         foreach (var job in JobExporter.Select(jobs, camera, false).Where(j => j.Status == "completed"))
         {
             considered++;
-            if (job.NoPeople) { noPeople++; continue; }
+            if (job.NoPeople || job.Screening?.SceneMode == true) { noPeople++; continue; }   // scene-mode scores are not person scores
             if (job.Weapon == "yes") { weapon++; continue; }
             if (job.Screening?.SuspiciousScore is not { } score || double.IsNaN(score)) { noScore++; continue; }
 

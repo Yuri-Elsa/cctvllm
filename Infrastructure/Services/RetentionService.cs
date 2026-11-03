@@ -90,9 +90,10 @@ public sealed class RetentionService(QueueStore store, RtspIngestService rtsp, I
         foreach (var job in Segments().Where(Finished))
         {
             var flagged = IsFlagged(job);
-            var limit = flagged ? keep.KeepFlagged : job.NoPeople ? keep.KeepEmpty : keep.KeepUnflagged;
+            var empty = job.NoPeople || job.Screening?.SceneMode == true;
+            var limit = flagged ? keep.KeepFlagged : empty ? keep.KeepEmpty : keep.KeepUnflagged;
             if (now - job.Created < limit || !Delete(job)) continue;
-            if (flagged) report.Flagged++; else if (job.NoPeople) report.Empty++; else report.Unflagged++;
+            if (flagged) report.Flagged++; else if (empty) report.Empty++; else report.Unflagged++;
         }
     }
 

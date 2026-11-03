@@ -1,0 +1,15 @@
+split,class_name,n,n_valid,flagged_yes,flagged_no,no_people,invalid,note
+test,Abuse,7,7,1,6,0,0,jumlah saja (n<10)
+test,Arrest,7,6,1,5,0,1,jumlah saja (n<10)
+test,Arson,7,7,1,6,0,0,jumlah saja (n<10)
+test,Assault,7,7,2,5,0,0,jumlah saja (n<10)
+test,Burglary,7,4,0,4,0,3,jumlah saja (n<10)
+test,Explosion,7,7,2,5,3,0,jumlah saja (n<10)
+test,Fighting,7,7,0,7,0,0,jumlah saja (n<10)
+test,Normal,21,15,3,12,1,6,
+test,RoadAccidents,7,7,2,5,0,0,jumlah saja (n<10)
+test,Robbery,7,7,3,4,0,0,jumlah saja (n<10)
+test,Shooting,7,7,0,7,0,0,jumlah saja (n<10)
+test,Shoplifting,7,6,0,6,0,1,jumlah saja (n<10)
+test,Stealing,7,7,0,7,0,0,jumlah saja (n<10)
+test,Vandalism,7,7,1,6,0,0,jumlah saja (n<10)

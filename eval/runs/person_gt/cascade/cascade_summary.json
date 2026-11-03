@@ -1,0 +1,304 @@
+{
+  "llm": "llm:qwen3-vl:4b-instruct",
+  "person_share": 0.2,
+  "llm_seconds": 3.38095,
+  "max_fpr": 0.2,
+  "recall_targets": [
+    0.9,
+    0.95,
+    0.98
+  ],
+  "notes": [
+    "llm:qwen3-vl:4b-cctv: tidak punya satu pun skor valid (semua panggilan gagal) dan dikeluarkan."
+  ],
+  "yolo": {
+    "yolo:yolov8m": {
+      "yolo_seconds": 0.34755,
+      "strategies": {
+        "yolo:yolov8m saja": {
+          "params": {
+            "t": 0.050099
+          },
+          "test": {
+            "recall": 0.9752066115702479,
+            "fpr": 0.4444444444444444,
+            "video_recall": 1.0,
+            "call_data": 0.0,
+            "call": 0.0,
+            "latency_s": 0.34755,
+            "pass_frac": 0.5505968778696051
+          },
+          "kind": "yolo"
+        },
+        "llm:qwen3-vl:4b-instruct saja": {
+          "params": {
+            "t": 0.999978
+          },
+          "test": {
+            "recall": 0.9834710743801653,
+            "fpr": 0.14814814814814814,
+            "video_recall": 1.0,
+            "call_data": 1.0,
+            "call": 1.0,
+            "latency_s": 3.38095,
+            "pass_frac": 0.3152127333945516
+          },
+          "kind": "llm"
+        },
+        "Gabungan (recall \u2265 90% / 95% / 98%)": {
+          "params": {
+            "t_lo": 0.0,
+            "t_hi": 0.25,
+            "t_llm": 0.999993
+          },
+          "test": {
+            "recall": 0.9917355371900827,
+            "fpr": 0.24074074074074073,
+            "video_recall": 1.0,
+            "call_data": 0.2857142857142857,
+            "call": 0.6486072849709213,
+            "latency_s": 2.5404588001224364,
+            "pass_frac": 0.3909397000306091
+          },
+          "kind": "cascade"
+        }
+      },
+      "paired": {
+        "Gabungan (recall \u2265 90% / 95% / 98%)": {
+          "params": {
+            "t_lo": 0.0,
+            "t_hi": 0.25,
+            "t_llm": 0.999993
+          },
+          "test": {
+            "recall": 0.9917355371900827,
+            "fpr": 0.24074074074074073,
+            "video_recall": 1.0,
+            "call_data": 0.2857142857142857,
+            "call": 0.6486072849709213,
+            "latency_s": 2.5404588001224364,
+            "pass_frac": 0.3909397000306091
+          },
+          "vs_llm_recall": [
+            0.008264462809917328,
+            [
+              0.0,
+              0.027278982485404533
+            ]
+          ],
+          "vs_yolo_recall": [
+            0.016528925619834767,
+            [
+              0.0,
+              0.043104998759613024
+            ]
+          ],
+          "vs_llm_call": [
+            -0.35139271502907865,
+            [
+              -0.49271324786324777,
+              -0.22133229078205174
+            ]
+          ]
+        }
+      },
+      "cost_crossover": {
+        "llm:qwen3-vl:4b-instruct saja vs yolo:yolov8m saja": "llm:qwen3-vl:4b-instruct saja lebih murah dari yolo:yolov8m saja jika D > 12.9 s per frame yang lolos; di bawah itu yolo:yolov8m saja lebih murah.",
+        "Gabungan (recall \u2265 90% / 95% / 98%) vs yolo:yolov8m saja": "Gabungan (recall \u2265 90% / 95% / 98%) lebih murah dari yolo:yolov8m saja jika D > 13.7 s per frame yang lolos; di bawah itu yolo:yolov8m saja lebih murah.",
+        "Gabungan (recall \u2265 90% / 95% / 98%) vs llm:qwen3-vl:4b-instruct saja": "Gabungan (recall \u2265 90% / 95% / 98%) lebih murah dari llm:qwen3-vl:4b-instruct saja jika D < 11.1 s per frame yang lolos; di atas itu llm:qwen3-vl:4b-instruct saja lebih murah."
+      }
+    },
+    "yolo:yolov8n": {
+      "yolo_seconds": 0.0659,
+      "strategies": {
+        "yolo:yolov8n saja": {
+          "params": {
+            "t": 0.164922
+          },
+          "test": {
+            "recall": 0.8677685950413223,
+            "fpr": 0.2037037037037037,
+            "video_recall": 1.0,
+            "call_data": 0.0,
+            "call": 0.0,
+            "latency_s": 0.0659,
+            "pass_frac": 0.3365166819712274
+          },
+          "kind": "yolo"
+        },
+        "llm:qwen3-vl:4b-instruct saja": {
+          "params": {
+            "t": 0.999978
+          },
+          "test": {
+            "recall": 0.9834710743801653,
+            "fpr": 0.14814814814814814,
+            "video_recall": 1.0,
+            "call_data": 1.0,
+            "call": 1.0,
+            "latency_s": 3.38095,
+            "pass_frac": 0.3152127333945516
+          },
+          "kind": "llm"
+        },
+        "Gabungan (recall \u2265 90% / 95% / 98%)": {
+          "params": {
+            "t_lo": 0.0,
+            "t_hi": 0.25,
+            "t_llm": 0.999993
+          },
+          "test": {
+            "recall": 0.9834710743801653,
+            "fpr": 0.2222222222222222,
+            "video_recall": 1.0,
+            "call_data": 0.4057142857142857,
+            "call": 0.7359657177838996,
+            "latency_s": 2.5541632935414755,
+            "pass_frac": 0.37447199265381087
+          },
+          "kind": "cascade"
+        }
+      },
+      "paired": {
+        "Gabungan (recall \u2265 90% / 95% / 98%)": {
+          "params": {
+            "t_lo": 0.0,
+            "t_hi": 0.25,
+            "t_llm": 0.999993
+          },
+          "test": {
+            "recall": 0.9834710743801653,
+            "fpr": 0.2222222222222222,
+            "video_recall": 1.0,
+            "call_data": 0.4057142857142857,
+            "call": 0.7359657177838996,
+            "latency_s": 2.5541632935414755,
+            "pass_frac": 0.37447199265381087
+          },
+          "vs_llm_recall": [
+            0.0,
+            [
+              0.0,
+              0.0
+            ]
+          ],
+          "vs_yolo_recall": [
+            0.11570247933884303,
+            [
+              0.05217391304347829,
+              0.1889763779527559
+            ]
+          ],
+          "vs_llm_call": [
+            -0.26403428221610037,
+            [
+              -0.3620761118378024,
+              -0.18298224451070752
+            ]
+          ]
+        }
+      },
+      "cost_crossover": {
+        "llm:qwen3-vl:4b-instruct saja vs yolo:yolov8n saja": "llm:qwen3-vl:4b-instruct saja lebih murah dari yolo:yolov8n saja jika D > 155.6 s per frame yang lolos; di bawah itu yolo:yolov8n saja lebih murah.",
+        "Gabungan (recall \u2265 90% / 95% / 98%) vs yolo:yolov8n saja": "Gabungan (recall \u2265 90% / 95% / 98%) tidak pernah lebih murah dari yolo:yolov8n saja (tidak lebih cepat dan beban tidak lebih kecil).",
+        "Gabungan (recall \u2265 90% / 95% / 98%) vs llm:qwen3-vl:4b-instruct saja": "Gabungan (recall \u2265 90% / 95% / 98%) lebih murah dari llm:qwen3-vl:4b-instruct saja jika D < 14.0 s per frame yang lolos; di atas itu llm:qwen3-vl:4b-instruct saja lebih murah."
+      }
+    },
+    "yolo:yolov8s": {
+      "yolo_seconds": 0.14595,
+      "strategies": {
+        "yolo:yolov8s saja": {
+          "params": {
+            "t": 0.079919
+          },
+          "test": {
+            "recall": 0.9256198347107438,
+            "fpr": 0.46296296296296297,
+            "video_recall": 1.0,
+            "call_data": 0.0,
+            "call": 0.0,
+            "latency_s": 0.14595,
+            "pass_frac": 0.5554943373125192
+          },
+          "kind": "yolo"
+        },
+        "llm:qwen3-vl:4b-instruct saja": {
+          "params": {
+            "t": 0.999978
+          },
+          "test": {
+            "recall": 0.9834710743801653,
+            "fpr": 0.14814814814814814,
+            "video_recall": 1.0,
+            "call_data": 1.0,
+            "call": 1.0,
+            "latency_s": 3.38095,
+            "pass_frac": 0.3152127333945516
+          },
+          "kind": "llm"
+        },
+        "Gabungan (recall \u2265 90% / 95% / 98%)": {
+          "params": {
+            "t_lo": 0.0,
+            "t_hi": 0.25,
+            "t_llm": 0.999993
+          },
+          "test": {
+            "recall": 0.9834710743801653,
+            "fpr": 0.2037037037037037,
+            "video_recall": 1.0,
+            "call_data": 0.3657142857142857,
+            "call": 0.7243954698500153,
+            "latency_s": 2.5950948637894093,
+            "pass_frac": 0.3596571778389961
+          },
+          "kind": "cascade"
+        }
+      },
+      "paired": {
+        "Gabungan (recall \u2265 90% / 95% / 98%)": {
+          "params": {
+            "t_lo": 0.0,
+            "t_hi": 0.25,
+            "t_llm": 0.999993
+          },
+          "test": {
+            "recall": 0.9834710743801653,
+            "fpr": 0.2037037037037037,
+            "video_recall": 1.0,
+            "call_data": 0.3657142857142857,
+            "call": 0.7243954698500153,
+            "latency_s": 2.5950948637894093,
+            "pass_frac": 0.3596571778389961
+          },
+          "vs_llm_recall": [
+            0.0,
+            [
+              0.0,
+              0.0
+            ]
+          ],
+          "vs_yolo_recall": [
+            0.05785123966942152,
+            [
+              0.017695233659369692,
+              0.0991751309065674
+            ]
+          ],
+          "vs_llm_call": [
+            -0.27560453014998465,
+            [
+              -0.351035496249782,
+              -0.20057268644806917
+            ]
+          ]
+        }
+      },
+      "cost_crossover": {
+        "llm:qwen3-vl:4b-instruct saja vs yolo:yolov8s saja": "llm:qwen3-vl:4b-instruct saja lebih murah dari yolo:yolov8s saja jika D > 13.5 s per frame yang lolos; di bawah itu yolo:yolov8s saja lebih murah.",
+        "Gabungan (recall \u2265 90% / 95% / 98%) vs yolo:yolov8s saja": "Gabungan (recall \u2265 90% / 95% / 98%) lebih murah dari yolo:yolov8s saja jika D > 12.5 s per frame yang lolos; di bawah itu yolo:yolov8s saja lebih murah.",
+        "Gabungan (recall \u2265 90% / 95% / 98%) vs llm:qwen3-vl:4b-instruct saja": "Gabungan (recall \u2265 90% / 95% / 98%) lebih murah dari llm:qwen3-vl:4b-instruct saja jika D < 17.7 s per frame yang lolos; di atas itu llm:qwen3-vl:4b-instruct saja lebih murah."
+      }
+    }
+  }
+}

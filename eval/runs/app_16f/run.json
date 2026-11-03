@@ -1,0 +1,29 @@
+{
+  "manifest": "D:\\buat kp phr\\cctvllm\\benchmark\\manifest.csv",
+  "manifest_sha256": "78c7060334b0ff18e02e84975d4f5edc49fef3340d77ff78574e312976007446",
+  "split": "test",
+  "strata": "all",
+  "n_clips": 112,
+  "settings": {
+    "mode": "local",
+    "endpoint": "http://127.0.0.1:11434/v1",
+    "model": "gemma4:e2b-it-qat",
+    "personLabels": true,
+    "flagActivity": "",
+    "siteContextEnabled": false,
+    "siteContext": "",
+    "weaponEnabled": true,
+    "batchProcessing": false
+  },
+  "settings_hash": "9200f71f528dd06b62cd14e8189415e675831897672c1b06c09c303e7d63e7d6",
+  "frame_limit": 16,
+  "app_health": {
+    "ok": true,
+    "backend": "ASP.NET Core",
+    "version": "10.0.12",
+    "preflight": "warn"
+  },
+  "base_url": "http://127.0.0.1:8766",
+  "python": "3.13.7",
+  "started_at": "2026-10-15T08:48:17+00:00"
+}

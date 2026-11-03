@@ -1,0 +1,29 @@
+{
+  "manifest": "eval\\runs\\subset47\\subset_manifest.csv",
+  "manifest_sha256": "729133fdd4b6dbffe1245811bf5d454c8d6fd68c525d4b94213ed797905a44f7",
+  "split": "test",
+  "strata": "all",
+  "n_clips": 47,
+  "settings": {
+    "mode": "local",
+    "endpoint": "http://127.0.0.1:11434/v1",
+    "model": "qwen3-vl:4b-instruct",
+    "personLabels": true,
+    "flagActivity": "",
+    "siteContextEnabled": false,
+    "siteContext": "",
+    "weaponEnabled": true,
+    "batchProcessing": false
+  },
+  "settings_hash": "1de6793e6474b7b5123585e11ba686390c04f9dc0a198eb4808f1d5bf1051af5",
+  "frame_limit": 16,
+  "app_health": {
+    "ok": true,
+    "backend": "ASP.NET Core",
+    "version": "10.0.12",
+    "preflight": "warn"
+  },
+  "base_url": "http://127.0.0.1:8766",
+  "python": "3.13.7",
+  "started_at": "2026-10-16T10:07:47+00:00"
+}

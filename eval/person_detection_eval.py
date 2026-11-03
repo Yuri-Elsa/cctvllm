@@ -329,9 +329,13 @@ button:hover{border-color:var(--acc)}button kbd{background:var(--bg);border:1px 
 .tag.on{background:var(--acc);border-color:var(--acc)}
 #msg{margin-top:10px;color:#ff8a80;min-height:20px}#done{display:none;margin-top:14px;padding:14px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
 .mute{color:var(--mute);font-size:13px}
+body.review #stage img{height:calc(100vh - 375px)}body.review #stage.zoom{max-height:calc(100vh - 375px)}body.review #stage.zoom img{height:auto}
+#banner{display:none;background:#2a2410;border:1px solid #5c4d12;color:#f1d98a;padding:8px 12px;border-radius:8px;margin-bottom:10px;font-size:13px}
 </style></head><body>
 <header><b>Pelabelan frame</b><div class="bar"><i id="fill"></i></div><div id="stats"></div></header>
 <main>
+<div id="banner"><b>Mode tinjau ulang.</b> Frame di bawah adalah frame yang tidak disepakati detektor. Skor dan label lama disembunyikan:
+nilai ulang hanya dari gambar. Label lama tetap tersimpan di kolom label_before_review.</div>
 <div id="guide"><b>Ada orang (1)</b> bila minimal satu manusia terlihat, termasuk yang jauh, kecil, atau sebagian terpotong. <b>Tidak ada (0)</b> bila tidak ada manusia sama sekali. Tag kesulitan bersifat opsional.</div>
 <div id="stage"><span id="badge"></span><img id="img" alt="frame"></div>
 <div class="row"><button id="no"><kbd>0</kbd>Tidak ada orang</button><button id="yes"><kbd>1</kbd>Ada orang</button></div>
@@ -343,7 +347,7 @@ button:hover{border-color:var(--acc)}button kbd{background:var(--bg);border:1px 
 <div class="mute" style="margin-top:14px">Tersimpan otomatis ke labels.csv setiap kali menekan tombol. Tutup file itu di Excel selama melabeli. Hentikan alat ini dengan Ctrl+C di terminal.</div>
 </main>
 <script>
-const TAGS=__TAGS__;let items=[],i=0;
+const TAGS=__TAGS__;let items=[],i=0,review=false;
 const $=id=>document.getElementById(id);
 function tagsOf(it){return it.tags?it.tags.split('|').filter(Boolean):[]}
 function render(){
@@ -356,7 +360,12 @@ function render(){
  const t=tagsOf(it);document.querySelectorAll('.tag').forEach(e=>e.classList.toggle('on',t.includes(e.dataset.t)));
  for(const k of [i+1,i+2]){if(items[k]){new Image().src='/img/'+encodeURIComponent(items[k].id)}}
  const left=items.filter(x=>x.y==='').length;
- if(left===0){const c={};for(const x of items){const k=x.split+' '+x.y;c[k]=(c[k]||0)+1}
+ if(left===0&&review){const t=items.length,ch=items.filter(x=>(x.before==='0'||x.before==='1')&&x.before!==x.y).length,
+   nw=items.filter(x=>x.before==='-').length,had=t-nw;
+  $('done').style.display='block';
+  $('done').innerHTML='<b>Semua '+t+' frame sudah ditinjau.</b><br>Label yang berubah: '+ch+' dari '+had+' frame yang sebelumnya berlabel'+
+   (nw?' (+ '+nw+' frame yang sebelumnya kosong kini berlabel)':'')+'.<br><span class="mute">Jalankan ulang analyze untuk melihat dampaknya pada hasil.</span>'}
+ else if(left===0){const c={};for(const x of items){const k=x.split+' '+x.y;c[k]=(c[k]||0)+1}
   $('done').style.display='block';
   $('done').innerHTML='<b>Semua frame sudah berlabel.</b><br>calibration: orang '+(c['calibration 1']||0)+', kosong '+(c['calibration 0']||0)+
    ' &nbsp;|&nbsp; test: orang '+(c['test 1']||0)+', kosong '+(c['test 0']||0)+
@@ -367,7 +376,7 @@ async function save(y,tags){
  const it=items[i];
  try{const r=await fetch('/api/label',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:it.id,y:y,tags:tags})});
   const j=await r.json();if(!r.ok){$('msg').textContent=j.error||'Gagal menyimpan';return false}
-  it.y=y;it.tags=tags;$('msg').textContent='';return true}
+  it.y=j.y!==undefined?j.y:y;it.tags=tags;it.before=j.before||'';$('msg').textContent='';return true}
  catch(e){$('msg').textContent='Server tidak terjangkau: '+e;return false}
 }
 function nextUnlabeled(from){for(let k=1;k<=items.length;k++){const j=(from+k)%items.length;if(items[j].y==='')return j}return -1}
@@ -384,7 +393,9 @@ document.addEventListener('keydown',e=>{if(e.ctrlKey||e.metaKey||e.altKey)return
  else if(k==='u'){const j=nextUnlabeled(i);if(j>=0)go(j)}
  else if(k==='delete'||k==='backspace')answer('');else if(k==='z')$('stage').classList.toggle('zoom');
  else{const t=TAGS.find(x=>x[1]===k);if(t)toggle(t[0])}});
-fetch('/api/state').then(r=>r.json()).then(d=>{items=d.items;const j=items.findIndex(x=>x.y==='');i=j>=0?j:0;render()});
+fetch('/api/state').then(r=>r.json()).then(d=>{items=d.items;review=!!d.review;
+ if(review){document.body.classList.add('review');$('banner').style.display='block';document.querySelector('header b').textContent='Tinjau ulang frame';$('clr').innerHTML='<kbd>Del</kbd>Kembalikan label lama'}
+ const j=items.findIndex(x=>x.y==='');i=j>=0?j:0;render()});
 </script></body></html>"""
 
 
@@ -396,8 +407,11 @@ def read_csv_rows(path):
         return list(rd.fieldnames or []), list(rd)
 
 
-def make_label_server(labels_path, port=8765):
-    """HTTP server for labeling frames in the browser. Returns the (not yet serving) server."""
+def make_label_server(labels_path, port=8765, review=None):
+    """HTTP server for labeling frames in the browser. Returns the (not yet serving) server.
+
+    review: path of a CSV with a frame_id column (e.g. disagreements_*.csv). Only those frames are shown, in shuffled
+    order, with the earlier label hidden; the first decision stores the old label in `label_before_review`."""
     import threading
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     labels_path = Path(labels_path).resolve()
@@ -407,6 +421,16 @@ def make_label_server(labels_path, port=8765):
         if col not in fields:
             fields.append(col)
     by_id = {r["frame_id"]: r for r in rows}
+    review_ids, skipped = None, 0
+    if review:
+        _, wanted = read_csv_rows(review)
+        listed = [r.get("frame_id") for r in wanted if r.get("frame_id")]
+        review_ids = list(dict.fromkeys(i for i in listed if i in by_id))
+        skipped = len(set(listed)) - len(review_ids)
+        random.Random(7).shuffle(review_ids)             # shuffled: neither order nor neighbours hint at the detector case
+        if "label_before_review" not in fields:
+            fields.append("label_before_review")
+    view_rows = [by_id[i] for i in review_ids] if review else rows
     lock = threading.Lock()
     page = LABEL_HTML.replace("__TAGS__", json.dumps(LABEL_TAGS)).encode("utf-8")
 
@@ -442,10 +466,13 @@ def make_label_server(labels_path, port=8765):
                 return self._send(200, page, "text/html; charset=utf-8")
             if self.path == "/api/state":
                 with lock:
-                    # class_name and video_id are deliberately not sent: the annotator should judge the image only
-                    items = [{"id": r["frame_id"], "y": norm(r.get("has_person")), "tags": r.get("difficulty") or "",
-                              "split": r.get("split") or ""} for r in rows]
-                return self._json(200, {"items": items})
+                    # class_name, video_id and detector scores are deliberately not sent: judge the image only
+                    items = []
+                    for r in view_rows:
+                        before = (r.get("label_before_review") or "") if review else ""
+                        items.append({"id": r["frame_id"], "tags": r.get("difficulty") or "", "split": r.get("split") or "",
+                                      "y": norm(r.get("has_person")) if (not review or before) else "", "before": before})
+                return self._json(200, {"items": items, "review": bool(review)})
             if self.path.startswith("/img/"):
                 from urllib.parse import unquote
                 row = by_id.get(unquote(self.path[5:]))
@@ -464,31 +491,57 @@ def make_label_server(labels_path, port=8765):
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
                 row = by_id[body["id"]]
+                if review and body["id"] not in set(review_ids):
+                    return self._json(400, {"error": "frame is not part of the review set"})
                 y = norm(body.get("y"))
                 known = {t for t, _, _ in LABEL_TAGS}
                 tags = "|".join(t for t in str(body.get("tags") or "").split("|") if t in known)
             except (KeyError, ValueError, TypeError):
                 return self._json(400, {"error": "bad request"})
             with lock:
-                old = (row.get("has_person"), row.get("difficulty"))
-                row["has_person"], row["difficulty"] = y, tags
+                old = (row.get("has_person"), row.get("difficulty"), row.get("label_before_review"))
+                if review:
+                    marker = row.get("label_before_review") or ""
+                    if y == "":
+                        if marker:                                  # undo: bring the old label back
+                            row["has_person"] = marker if marker in ("0", "1") else ""
+                            row["label_before_review"] = ""
+                    else:
+                        if not marker:
+                            row["label_before_review"] = norm(row.get("has_person")) or "-"
+                        row["has_person"] = y
+                    row["difficulty"] = tags
+                else:
+                    row["has_person"], row["difficulty"] = y, tags
                 try:
                     save()
                 except OSError as e:           # typically labels.csv is open in Excel on Windows
-                    row["has_person"], row["difficulty"] = old
+                    row["has_person"], row["difficulty"], row["label_before_review"] = old
+                    if not review:
+                        row.pop("label_before_review", None)
                     return self._json(500, {"error": f"Tidak bisa menyimpan {labels_path.name} ({e.strerror or e}). "
                                                      "Tutup file itu di Excel lalu coba lagi."})
-            return self._json(200, {"ok": True})
+            return self._json(200, {"ok": True, "y": norm(row.get("has_person")) if (not review or row.get("label_before_review")) else "",
+                                    "before": row.get("label_before_review") or ""})
 
-    return ThreadingHTTPServer(("127.0.0.1", port), H)
+    server = ThreadingHTTPServer(("127.0.0.1", port), H)
+    server.review_count, server.review_skipped = len(review_ids or []), skipped
+    return server
 
 
 def cmd_label(a):
     import webbrowser
     try:
-        server = make_label_server(a.labels, a.port)
+        server = make_label_server(a.labels, a.port, a.review)
     except OSError as e:
         sys.exit(f"Cannot start on port {a.port}: {e}. Try --port {a.port + 1}.")
+    if a.review:
+        if server.review_skipped:
+            print(f"warning: {server.review_skipped} frame_id in {a.review} are not in {a.labels} and are ignored", file=sys.stderr)
+        if not server.review_count:
+            server.server_close()
+            sys.exit(f"No frames to review: {a.review} has no frame_id that matches {a.labels}.")
+        print(f"Mode tinjau ulang: {server.review_count} frame dari {a.review}; label lama dan skor disembunyikan.")
     url = f"http://127.0.0.1:{server.server_address[1]}/"
     print(f"Alat pelabelan berjalan di {url}\nKeyboard: 1 = ada orang, 0 = tidak ada, panah = pindah, U = ke yang belum diisi, "
           "Q/W/E/R = tag kesulitan.\nTekan Ctrl+C untuk berhenti; label tersimpan otomatis ke " + str(a.labels))
@@ -664,6 +717,17 @@ def pick_threshold(y, s, target):
     return 0.0, False                                       # target unreachable (e.g. invalid answers)
 
 
+def pick_threshold_fpr(y, s, target):
+    """Lowest threshold whose false-positive rate on this data is <= target (the most recall at that FPR)."""
+    neg = int((y == 0).sum())
+    best = None
+    for t, tp, fp, fn, tn in curve(y, s):                  # descending thresholds: FPR only grows
+        if neg and fp / neg > target + 1e-12:
+            break
+        best = t
+    return floor6(best) if best is not None else 1.000001   # nothing passes if even the top score exceeds the target
+
+
 def best_f1_threshold(y, s):
     best = (-1.0, None)
     for t, tp, fp, fn, tn in curve(y, s):
@@ -709,9 +773,11 @@ def cmd_analyze(a):
     labels = read_labels(a.labels)
     scores = load_scores(a.scores)
     names = sorted({d for _, d in scores})
+    if a.detectors:
+        wanted = [w.strip() for w in a.detectors.split(",") if w.strip()]
+        names = [n for n in names if any(n == w or n.startswith(w) for w in wanted)]
     if not names:
-        sys.exit("scores file has no records")
-    ref = a.reference or next((n for n in names if n.startswith("yolo")), names[0])
+        sys.exit("No detectors to analyze: the scores file is empty or --detectors matches nothing.")
     lab = pd.DataFrame(labels)
     if "split" not in lab or lab["split"].fillna("").eq("").any():
         lab["split"] = [r["split"] if r.get("split") else split_of(r["video_id"], a.seed, 0.3) for r in labels]
@@ -726,8 +792,18 @@ def cmd_analyze(a):
         df["has_lp"] = [recs[f].get("has_logprobs") for f in df["frame_id"]]
         invalid[n] = int((df["score"] < 0).sum())
         data[n] = df
-    common = set.intersection(*(set(d["frame_id"]) for d in data.values()))
     notes = []
+    for n in list(names):                       # e.g. a model name that never worked: every call failed
+        if not (data[n]["score"] >= 0).any():
+            notes.append(f"{n}: tidak punya satu pun skor valid (semua panggilan gagal) dan dikeluarkan dari analisis.")
+            names.remove(n)
+            del data[n]
+    if not names:
+        sys.exit("No detector has any valid score.")
+    ref = a.reference or next((n for n in names if n.startswith("yolo")), names[0])
+    if ref not in names:
+        sys.exit(f"Reference detector {ref!r} is not among the analyzed detectors: {', '.join(names)}")
+    common = set.intersection(*(set(d["frame_id"]) for d in data.values()))
     if len(common) < len(ids):
         notes.append(f"{len(ids) - len(common)} frame berlabel tidak punya skor dari salah satu detektor dan dikeluarkan "
                      "agar semua detektor dibandingkan pada frame yang sama.")
@@ -780,29 +856,85 @@ def cmd_analyze(a):
     # ---- frozen evaluation on the test split, cluster bootstrap over videos
     rng = np.random.default_rng(a.seed)
     test_df = {n: data[n][tst.to_numpy()] for n in names}
-    video_counts = {n: per_video_counts(test_df[n], res[n]["threshold"]) for n in names}
-    nv = len(video_counts[ref])
+    nv = test_df[ref]["video_id"].nunique()
     weights = [np.bincount(rng.integers(0, nv, nv), minlength=nv) for _ in range(a.n_boot)]
-    boot = {n: [metrics_from(w @ video_counts[n]) for w in weights] for n in names}
+
+    def evaluate_op(n, t):
+        vc = per_video_counts(test_df[n], t)
+        bt = [metrics_from(w @ vc) for w in weights]
+        point = metrics_from(vc.sum(axis=0))
+        return ({"threshold": t, "metrics": {k: {"value": v, "ci": pctl([b[k] for b in bt])} for k, v in point.items()},
+                 "counts": dict(zip(("tp", "fp", "fn", "tn"), map(int, vc.sum(axis=0)[:4])))}, bt)
+
+    def paired(bn, br, keys=("recall", "fpr", "video_recall")):
+        return {k: {"value": float(np.nanmean([x[k] for x in bn]) - np.nanmean([x[k] for x in br])), "ci": pctl([x[k] - y[k] for x, y in zip(bn, br)])}
+                for k in keys}
+
+    boot = {}
     for n in names:
-        point = metrics_from(video_counts[n].sum(axis=0))
-        res[n]["test"] = {k: {"value": v, "ci": pctl([b[k] for b in boot[n]])} for k, v in point.items()}
-        res[n]["test_counts"] = dict(zip(("tp", "fp", "fn", "tn"), map(int, video_counts[n].sum(axis=0)[:4])))
+        op, boot[n] = evaluate_op(n, res[n]["threshold"])
+        res[n]["test"], res[n]["test_counts"] = op["metrics"], op["counts"]
     deltas = {}
     for n in names:
-        if n == ref:
-            continue
-        deltas[n] = {}
-        for k in ("recall", "fpr", "video_recall"):
-            d_point = res[n]["test"][k]["value"] - res[ref]["test"][k]["value"]
-            deltas[n][k] = {"value": d_point, "ci": pctl([bn[k] - br[k] for bn, br in zip(boot[n], boot[ref])])}
+        if n != ref:
+            deltas[n] = paired(boot[n], boot[ref])
+            for k in deltas[n]:                      # point estimate from the data, not the mean of resamples
+                deltas[n][k]["value"] = res[n]["test"][k]["value"] - res[ref]["test"][k]["value"]
+
+    # ---- matched false-positive rate: threshold per detector from the calibration split
+    fpr_rows = []
+    for target in a.fpr_targets:
+        ops = {}
+        for n in names:
+            yc, sc = arr(n, cal)
+            op, bt = evaluate_op(n, pick_threshold_fpr(yc, sc, target))
+            ops[n] = (op, bt)
+        for n in names:
+            op, bt = ops[n]
+            entry = dict(op)
+            if n != ref:
+                entry["delta_vs_reference"] = paired(bt, ops[ref][1])
+                for k in entry["delta_vs_reference"]:
+                    entry["delta_vs_reference"][k]["value"] = op["metrics"][k]["value"] - ops[ref][0]["metrics"][k]["value"]
+            res[n].setdefault("fpr_ops", {})[str(target)] = entry
+            fpr_rows.append((target, n, entry))
+
+    for n in names:
+        if res[n]["test"]["fpr"]["value"] >= 0.95:
+            notes.append(f"{n}: pada target recall {a.recall_target:.0%} threshold yang terpilih meloloskan hampir semua frame "
+                         f"(FPR {fmt(res[n]['test']['fpr']['value'])}). Ada frame berisi orang yang tidak mendapat skor di atas "
+                         "lantai pencatatan, jadi target itu hanya tercapai tanpa gate yang berguna. Bandingkan pada FPR yang "
+                         "disamakan, bukan pada threshold beku ini.")
+        if n.startswith("llm") and res[n]["threshold"] >= 0.99:
+            notes.append(f"{n}: threshold terpilih {res[n]['threshold']:.6f} berada di ekor jenuh (probabilitas mendekati 1). "
+                         "Nilai sedekat itu rapuh terhadap perubahan model, kuantisasi atau perangkat; jangan salin ke Settings "
+                         "tanpa memeriksa kurva (curve_*.csv) dan titik yang lebih longgar.")
 
     # ---- reference thresholds (point estimates on test) and per-difficulty recall
     reference_rows = []
     for t in a.reference_thresholds:
         for n in names:
-            yt, st = arr(n, tst)
-            reference_rows.append((n, t, rates(*counts(yt, st, t))))
+            reference_rows.append((n, t, metrics_from(per_video_counts(test_df[n], t).sum(axis=0))))
+
+    # ---- where the detectors disagree (all labeled frames), written for manual inspection
+    agree_rows = []
+    for n in names:
+        if n == ref:
+            continue
+        r_s, o_s = data[ref]["score"].to_numpy(), data[n]["score"].to_numpy()
+        r_pass, o_pass = r_s >= a.ref_threshold, o_s >= a.other_threshold
+        yy = data[ref]["y"].to_numpy()
+        for label, name in ((1, "ada orang"), (0, "kosong")):
+            m = yy == label
+            agree_rows.append((n, name, int((m & r_pass & o_pass).sum()), int((m & ~r_pass & o_pass).sum()),
+                               int((m & r_pass & ~o_pass).sum()), int((m & ~r_pass & ~o_pass).sum())))
+        with open(out / f"disagreements_{n.replace(':', '_').replace('/', '_')}.csv", "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["frame_id", "path", "split", "has_person", f"{ref}_score", f"{n}_score", "case"])
+            for i in np.flatnonzero(r_pass != o_pass):
+                row = data[ref].iloc[i]
+                w.writerow([row["frame_id"], row["path"], row["split"], int(row["y"]), f"{r_s[i]:.4f}", f"{o_s[i]:.4f}",
+                            f"{ref} lolos, {n} tidak" if r_pass[i] else f"{n} lolos, {ref} tidak"])
     def tag_list(x):
         return [t.strip() for t in str(x).split("|") if t.strip()]
     tags = sorted({t for x in lab["difficulty"] for t in tag_list(x)})
@@ -823,6 +955,7 @@ def cmd_analyze(a):
         slow = (lat_n["median_s"] / lat_r["median_s"]) if lat_n and lat_r and lat_r["median_s"] else float("nan")
         verdict.append((n, ok, slow))
         res[n]["recall_noninferior"] = ok
+        res[n]["frozen_comparison_informative"] = res[ref]["test"]["fpr"]["value"] < 0.95
         res[n]["latency_ratio_vs_ref"] = slow
 
     # ---- plots
@@ -888,6 +1021,18 @@ def cmd_analyze(a):
             L.append(f"| {n} | {ci(dl['recall']['value'], dl['recall']['ci'])} | "
                      f"{ci(dl['video_recall']['value'], dl['video_recall']['ci'])} | {ci(dl['fpr']['value'], dl['fpr']['ci'])} |")
         L.append("")
+    if fpr_rows:
+        L += ["## Recall pada false-positive rate yang disamakan (test)", "",
+              "Tiap detektor mendapat threshold sendiri dari split calibration agar FPR-nya ≈ target, jadi perbandingan ini adil "
+              "walau skala skornya berbeda.", "",
+              "| Target FPR | Detektor | Threshold | Recall frame | FPR aktual | Recall video (gate) | Δ recall vs " + ref + " |", "|---|---|---|---|---|---|---|"]
+        for target, n, e in fpr_rows:
+            m = e["metrics"]
+            dl = e.get("delta_vs_reference")
+            L.append(f"| {target:.0%} | {n} | {e['threshold']:.6f} | {ci(m['recall']['value'], m['recall']['ci'])} | "
+                     f"{ci(m['fpr']['value'], m['fpr']['ci'])} | {ci(m['video_recall']['value'], m['video_recall']['ci'])} | "
+                     f"{ci(dl['recall']['value'], dl['recall']['ci']) if dl else '(referensi)'} |")
+        L.append("")
     L += ["## Kecepatan", "", "| Detektor | Median/frame | P95/frame | Frame/detik |", "|---|---|---|---|"]
     for n in names:
         lt = res[n]["latency"]
@@ -898,11 +1043,20 @@ def cmd_analyze(a):
         L += ["## Kesimpulan otomatis", "",
               f"Kriteria: batas bawah interval 95% untuk Δ recall frame ≥ −{a.margin:.2f} (non-inferior terhadap {ref}).", ""]
         for n, ok, slow in verdict:
+            informative = res[n]["frozen_comparison_informative"]
             speed = f"; {slow:.1f}x lebih lambat per frame" if not math.isnan(slow) and slow > 1 else \
                     f"; {1 / slow:.1f}x lebih cepat per frame" if not math.isnan(slow) and slow > 0 else ""
-            L.append(f"- **{n}**: kriteria recall {'**terpenuhi**' if ok else '**tidak terbukti terpenuhi**'}{speed}. "
-                     "Ini hanya satu sisi keputusan: pertimbangkan juga FPR, latensi pada perangkat nyata, dan "
-                     "hilangnya estimasi kecepatan orang pada detektor LLM.")
+            L.append(f"- **{n}**: pada threshold beku, kriteria recall {'**terpenuhi**' if ok else '**tidak terbukti terpenuhi**'}"
+                     f"{'' if informative else ' (tidak informatif: threshold beku referensi meloloskan hampir semua frame)'}{speed}.")
+            for target, n2, e in fpr_rows:
+                if n2 == n and e.get("delta_vs_reference"):
+                    lo, hi = e["delta_vs_reference"]["recall"]["ci"]
+                    word = ("**lebih baik**" if lo > 0 else "**lebih buruk**" if hi < 0 else "**tidak berbeda nyata**") \
+                        if not (math.isnan(lo) or math.isnan(hi)) else "tidak dapat ditentukan"
+                    L.append(f"  - Pada FPR ≈ {target:.0%}: recall {word} dibanding {ref} "
+                             f"(Δ {ci(e['delta_vs_reference']['recall']['value'], e['delta_vs_reference']['recall']['ci'])}).")
+            L.append("  - Ini hanya satu sisi keputusan: pertimbangkan juga latensi pada perangkat nyata dan hilangnya "
+                     "estimasi kecepatan orang pada detektor LLM.")
         L.append("")
     L += ["## Threshold untuk Model settings → Person threshold", "",
           "| Detektor | Dipilih (recall ≥ target di calibration) | Alternatif: F1 tertinggi di calibration |", "|---|---|---|"]
@@ -910,10 +1064,18 @@ def cmd_analyze(a):
         L.append(f"| {n} | {res[n]['threshold']:.6f} | {res[n]['threshold_best_f1']} |")
     L += ["", "App memakai satu pengaturan *Person threshold* untuk kedua detektor; isi dengan nilai detektor yang dipilih.", ""]
     if reference_rows:
-        L += ["## Pada threshold tetap (titik estimasi, test)", "", "| Detektor | Threshold | Recall | Presisi | FPR |", "|---|---|---|---|---|"]
+        L += ["## Pada threshold tetap (titik estimasi, test)", "",
+              "| Detektor | Threshold | Recall frame | Presisi | FPR | Recall video (gate) |", "|---|---|---|---|---|---|"]
         for n, t, r in reference_rows:
-            L.append(f"| {n} | {t} | {fmt(r['recall'])} | {fmt(r['precision'])} | {fmt(r['fpr'])} |")
+            L.append(f"| {n} | {t} | {fmt(r['recall'])} | {fmt(r['precision'])} | {fmt(r['fpr'])} | {fmt(r['video_recall'])} |")
         L.append("")
+    if agree_rows:
+        L += [f"## Kesepakatan detektor (semua frame berlabel; {ref} ≥ {a.ref_threshold}, detektor lain ≥ {a.other_threshold})", "",
+              f"| Detektor | Frame | keduanya lolos | hanya detektor ini lolos | hanya {ref} lolos | keduanya menolak |", "|---|---|---|---|---|---|"]
+        for n, name, both, only_o, only_r, none in agree_rows:
+            L.append(f"| {n} | {name} | {both} | {only_o} | {only_r} | {none} |")
+        L += ["", "Daftar frame yang tidak sepakat ada di `disagreements_*.csv`. Periksa frame *ada orang* yang hanya lolos di satu "
+              "detektor: apakah orangnya benar-benar ada atau label perlu dikoreksi.", ""]
     if diff_rows:
         L += ["## Recall per tag kesulitan (test, threshold beku)", "", "| Tag | Detektor | n frame orang | Recall |", "|---|---|---|---|"]
         for tag, n, k, r in diff_rows:
@@ -927,8 +1089,293 @@ def cmd_analyze(a):
           "jadi skor bisa sedikit berbeda dari di app.", ""]
     (out / "person_report.md").write_text("\n".join(L), encoding="utf-8")
     (out / "summary.json").write_text(json.dumps(
-        {"reference": ref, "recall_target": a.recall_target, "margin": a.margin, "detectors": res,
+        {"reference": ref, "recall_target": a.recall_target, "fpr_targets": a.fpr_targets, "margin": a.margin, "detectors": res,
          "deltas_vs_reference": deltas, "notes": notes}, indent=2, default=float), encoding="utf-8")
+    print("\n".join(L))
+    print(f"\nWritten to {out}/")
+
+
+# --------------------------------------------------------------------------- cascade (YOLO first, LLM for the uncertain band)
+
+CASCADE_T_LO = (0.0, 0.05, 0.1, 0.2, 0.3)
+CASCADE_T_HI = (0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, math.inf)
+CASCADE_T_LLM = (0.5, 0.9, 0.99, 0.999, 0.9999, 0.99999)
+
+
+def load_scored_frames(labels_path, scores_path, wanted=None, seed=20260929):
+    """Labeled frames with one score column `s::<detector>` per detector that has any valid score.
+    Returns (DataFrame, detector names, median latency per detector, notes)."""
+    import pandas as pd
+    labels = read_labels(labels_path)
+    scores = load_scores(scores_path)
+    lab = pd.DataFrame(labels)
+    if "split" not in lab or lab["split"].fillna("").eq("").any():
+        lab["split"] = [r["split"] if r.get("split") else split_of(r["video_id"], seed, 0.3) for r in labels]
+    names = sorted({d for _, d in scores})
+    if wanted:
+        names = [n for n in names if any(n == w or n.startswith(w) for w in wanted)]
+    notes, cols, latency = [], {}, {}
+    for n in list(names):
+        recs = {f: scores[(f, n)] for f in lab["frame_id"] if (f, n) in scores}
+        vals = {f: (-1.0 if r.get("score") is None else float(r["score"])) for f, r in recs.items()}
+        if not any(v >= 0 for v in vals.values()):
+            notes.append(f"{n}: tidak punya satu pun skor valid (semua panggilan gagal) dan dikeluarkan.")
+            names.remove(n)
+            continue
+        cols[n] = vals
+        lat = [r["latency_s"] for r in recs.values() if r.get("latency_s") is not None]
+        latency[n] = float(np.median(lat)) if lat else None
+    common = set(lab["frame_id"])
+    for n in names:
+        common &= set(cols[n])
+    if len(common) < len(lab):
+        notes.append(f"{len(lab) - len(common)} frame berlabel tidak punya skor dari semua detektor dan dikeluarkan.")
+    df = lab[lab["frame_id"].isin(common)].sort_values("frame_id").reset_index(drop=True)
+    for n in names:
+        df["s::" + n] = [cols[n][f] for f in df["frame_id"]]
+    return df, names, latency, notes
+
+
+def cascade_decision(kind, params, sy, sl):
+    """(passes, llm_called) for one strategy. kind: yolo | llm | cascade."""
+    if kind == "yolo":
+        return sy >= params["t"], np.zeros(len(sy), bool)
+    if kind == "llm":
+        return sl >= params["t"], np.ones(len(sy), bool)
+    call = (sy >= params["t_lo"]) & (sy < params["t_hi"])
+    return (sy >= params["t_hi"]) | (call & (sl >= params["t_llm"])), call
+
+
+def _cascade_counts(y, pas, call):
+    pos, neg = y == 1, y == 0
+    return [int((pas & pos).sum()), int((pas & neg).sum()), int((~pas & pos).sum()), int((~pas & neg).sum()),
+            int((call & pos).sum()), int((call & neg).sum()), int(pos.sum()), int(neg.sum())]
+
+
+def _cascade_video_rows(df, pas, call):
+    """One row per video: tp fp fn tn, has_person, gate_passed, calls_on_person, calls_on_empty, n_person, n_empty."""
+    y, rows = df["y"].to_numpy(), []
+    for _, idx in sorted(df.groupby("video_id").indices.items()):
+        c = _cascade_counts(y[idx], pas[idx], call[idx])
+        has = int((y[idx] == 1).any())
+        rows.append(c[:4] + [has, int(has and pas[idx].any())] + c[4:])
+    return np.array(rows, dtype=float)
+
+
+def _cascade_rates(c, pi, base_s, llm_s):
+    tp, fp, fn, tn, has, passed, cp, cn, npos, nneg = c
+
+    def d(a, b):
+        return a / b if b else float("nan")
+    recall, fpr = d(tp, tp + fn), d(fp, fp + tn)
+    call = pi * d(cp, npos) + (1 - pi) * d(cn, nneg)          # LLM calls per frame if a share `pi` of frames has a person
+    return {"recall": recall, "fpr": fpr, "video_recall": d(passed, has), "call_data": d(cp + cn, npos + nneg),
+            "call": call, "latency_s": base_s + call * llm_s, "pass_frac": pi * recall + (1 - pi) * fpr}
+
+
+def llm_threshold_candidates(sl, limit=80):
+    """Fixed grid plus the LLM scores seen in calibration: LLM probabilities saturate near 1, where a fixed grid is too coarse."""
+    seen = np.unique(np.floor(sl[sl >= 0] * 1e6) / 1e6)
+    if len(seen) > limit:
+        seen = np.unique(np.quantile(seen, np.linspace(0, 1, limit)))
+    return sorted(set(CASCADE_T_LLM) | {float(v) for v in seen})
+
+
+def select_cascade(y, sy, sl, target, max_fpr, pi, grid=None):
+    """Cheapest (fewest LLM calls) config reaching recall >= target with FPR <= max_fpr on this data."""
+    best, rows = None, []
+    candidates = llm_threshold_candidates(sl)
+    for t_lo in CASCADE_T_LO:
+        for t_hi in CASCADE_T_HI:
+            if t_lo >= t_hi:
+                continue
+            for t_llm in candidates:
+                pas, call = cascade_decision("cascade", {"t_lo": t_lo, "t_hi": t_hi, "t_llm": t_llm}, sy, sl)
+                tp, fp, fn, tn, cp, cn, npos, nneg = _cascade_counts(y, pas, call)
+                recall, fpr = tp / max(1, tp + fn), fp / max(1, fp + tn)
+                cost = pi * cp / max(1, npos) + (1 - pi) * cn / max(1, nneg)
+                rows.append((t_lo, t_hi, t_llm, recall, fpr, cost))
+    ok = [r for r in rows if r[3] >= target - 1e-12 and r[4] <= max_fpr + 1e-12]
+    reached = bool(ok)
+    if not ok:                                         # fall back to the best recall within the FPR budget
+        ok = [r for r in rows if r[4] <= max_fpr + 1e-12] or rows
+        best = min(ok, key=lambda r: (-r[3], r[5], r[4]))
+    else:
+        best = min(ok, key=lambda r: (r[5], -r[3], r[4]))
+    if grid is not None:
+        grid.extend(rows)
+    return {"t_lo": best[0], "t_hi": best[1], "t_llm": best[2]}, reached, best
+
+
+def cost_crossover(name_a, ta, la, name_b, tb, lb):
+    """Compare total cost per frame = detection time + load x D, D = description time per passed frame (seconds)."""
+    if ta <= tb and la <= lb:
+        return f"{name_a} lebih murah dari {name_b} untuk berapa pun D (lebih cepat dan beban tidak lebih besar)."
+    if ta >= tb and la >= lb:
+        return f"{name_a} tidak pernah lebih murah dari {name_b} (tidak lebih cepat dan beban tidak lebih kecil)."
+    d_star = (tb - ta) / (la - lb)
+    if la < lb:        # a is slower to detect but passes fewer frames: it wins when description is expensive
+        return f"{name_a} lebih murah dari {name_b} jika D > {d_star:.1f} s per frame yang lolos; di bawah itu {name_b} lebih murah."
+    return f"{name_a} lebih murah dari {name_b} jika D < {d_star:.1f} s per frame yang lolos; di atas itu {name_b} lebih murah."
+
+
+def describe_cascade(p):
+    auto = "tidak ada penerimaan otomatis" if math.isinf(p["t_hi"]) else f"YOLO ≥ {p['t_hi']:g} lolos tanpa LLM"
+    upper = "∞" if math.isinf(p["t_hi"]) else format(p["t_hi"], "g")
+    rejected = "tidak ada frame yang ditolak tanpa LLM" if p["t_lo"] <= 0 else f"YOLO < {p['t_lo']:g} ditolak tanpa LLM"
+    return f"{auto}; {p['t_lo']:g} ≤ YOLO < {upper} → tanya LLM (lolos jika p ≥ {p['t_llm']:g}); {rejected}"
+
+
+def cmd_cascade(a):
+    df, names, latency, notes = load_scored_frames(a.labels, a.scores, None, a.seed)
+    yolos = [n for n in names if n.startswith("yolo")] if not a.yolo else [n for n in names if n in a.yolo.split(",")]
+    llms = [n for n in names if n.startswith("llm")] if not a.llm else [n for n in names if n == a.llm]
+    if not yolos or not llms:
+        sys.exit("Need at least one YOLO and one LLM detector with valid scores (see --yolo / --llm).")
+    llm = llms[0]
+    if len(llms) > 1 and not a.llm:
+        notes.append(f"Ada beberapa detektor LLM; dipakai {llm} (pilih lain dengan --llm).")
+    pi = a.person_share
+    if not 0 < pi < 1:
+        sys.exit("--person-share must be between 0 and 1 (exclusive).")
+    llm_s = a.llm_seconds if a.llm_seconds is not None else latency.get(llm)
+    if not llm_s:
+        sys.exit("No LLM latency in the scores file; pass --llm-seconds.")
+    cal = (df["split"] == "calibration").to_numpy()
+    tst = (df["split"] == "test").to_numpy()
+    if not (df["y"][cal] == 1).any() or not tst.any():
+        sys.exit("Need person frames in the calibration split and a non-empty test split.")
+    ncal_neg = int((df["y"][cal] == 0).sum())
+    if ncal_neg < 30 or int((df["y"][tst] == 0).sum()) < 30:
+        notes.append("Frame kosong kurang dari 30 di calibration atau test: pilihan konfigurasi tidak stabil dan interval lebar. "
+                     "Anggap hasil ini gambaran awal, bukan keputusan.")
+    out = Path(a.out)
+    out.mkdir(parents=True, exist_ok=True)
+    test_df = df[tst].reset_index(drop=True)
+    nv = test_df["video_id"].nunique()
+    rng = np.random.default_rng(a.seed)
+    weights = [np.bincount(rng.integers(0, nv, nv), minlength=nv) for _ in range(a.n_boot)]
+    sl_all = df["s::" + llm].to_numpy()
+    sl_test = test_df["s::" + llm].to_numpy()
+    summary = {"llm": llm, "person_share": pi, "llm_seconds": llm_s, "max_fpr": a.max_fpr, "recall_targets": a.recall_targets,
+               "notes": notes, "yolo": {}}
+    L = ["# Simulasi pendekatan gabungan: YOLO sebagai penyaring, LLM untuk frame yang meragukan", "",
+         f"- LLM: **{llm}** (median {llm_s:.2f} s/frame). Semua angka berasal dari skor yang sudah tercatat; tidak ada model yang dijalankan ulang.",
+         f"- Frame berlabel: {len(df)} (calibration {int(cal.sum())}, test {int(tst.sum())} frame dari {nv} video).",
+         f"- Konfigurasi dipilih di split *calibration*: paling hemat panggilan LLM yang masih mencapai target recall dengan FPR ≤ {a.max_fpr:.0%}; "
+         "lalu **dibekukan** dan dinilai di split *test* (bootstrap per video, interval 95%).",
+         f"- Data ini sekitar {df['y'].mean():.0%} frame berisi orang, jauh lebih padat daripada CCTV nyata. Kolom bertanda π menghitung ulang biaya dan beban "
+         f"seolah {pi:.0%} frame berisi orang (`--person-share`); ubah sesuai perkiraan lokasi kantor.",
+         "- Biaya deteksi per frame = waktu YOLO + (proporsi frame yang dikirim ke LLM) × waktu LLM. Biaya model deskripsi tidak dihitung, "
+         "tetapi *beban ke model deskripsi* (proporsi frame yang lolos) ditampilkan.", ""]
+    for n in notes:
+        L.append(f"> Catatan: {n}")
+    if notes:
+        L.append("")
+    for yn in yolos:
+        yolo_s = a.yolo_seconds if a.yolo_seconds is not None else latency.get(yn) or 0.0
+        sy_all = df["s::" + yn].to_numpy()
+        sy_test = test_df["s::" + yn].to_numpy()
+        y_cal = df["y"].to_numpy()[cal]
+        strategies = []        # (label, kind, params, base_seconds, reached_note)
+        t_y = pick_threshold_fpr(y_cal, sy_all[cal], a.max_fpr)
+        t_l = pick_threshold_fpr(y_cal, sl_all[cal], a.max_fpr)
+        strategies.append((f"{yn} saja", "yolo", {"t": t_y}, yolo_s, ""))
+        strategies.append((f"{llm} saja", "llm", {"t": t_l}, 0.0, ""))
+        grid, chosen = [], {}
+        for target in a.recall_targets:
+            params, reached, best = select_cascade(y_cal, sy_all[cal], sl_all[cal], target, a.max_fpr, pi, grid if target == a.recall_targets[0] else None)
+            key = (params["t_lo"], params["t_hi"], params["t_llm"])
+            entry = chosen.setdefault(key, {"params": params, "targets": [], "unreached": []})
+            entry["targets"].append(target)
+            if not reached:
+                entry["unreached"].append(target)
+        for entry in chosen.values():            # targets that pick the same configuration share one row
+            targets = " / ".join(f"{t:.0%}" for t in entry["targets"])
+            miss = " / ".join(f"{t:.0%}" for t in entry["unreached"])
+            strategies.append((f"Gabungan (recall ≥ {targets})", "cascade", entry["params"], yolo_s,
+                               "" if not entry["unreached"] else
+                               f" (target {miss} tidak tercapai di calibration; dipakai recall terbaik dalam batas FPR)"))
+        with open(out / f"cascade_grid_{yn.replace(':', '_')}.csv", "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["yolo_low", "yolo_high", "llm_threshold", "calibration_recall", "calibration_fpr", "llm_calls_per_frame_pi"])
+            w.writerows([[r[0], "inf" if math.isinf(r[1]) else r[1], r[2], round(r[3], 4), round(r[4], 4), round(r[5], 4)] for r in grid])
+        evals = {}
+        for label, kind, params, base_s, note in strategies:
+            pas, call = cascade_decision(kind, params, sy_test, sl_test)
+            vc = _cascade_video_rows(test_df, pas, call)
+            boot = [_cascade_rates(w @ vc, pi, base_s, llm_s) for w in weights]
+            point = _cascade_rates(vc.sum(axis=0), pi, base_s, llm_s)
+            evals[label] = {"point": point, "boot": boot, "params": params, "note": note, "kind": kind}
+        ref_llm, ref_yolo = f"{llm} saja", f"{yn} saja"
+
+        def delta(label, ref, key):
+            e, r = evals[label], evals[ref]
+            return (e["point"][key] - r["point"][key], pctl([x[key] - y_[key] for x, y_ in zip(e["boot"], r["boot"])]))
+
+        L += [f"## Dengan {yn} (median {yolo_s:.3f} s/frame)", "",
+              "| Strategi | Recall frame | FPR | Recall video | Panggilan LLM/frame (data ini) | Panggilan LLM/frame (π) | Waktu deteksi/frame (π) | Beban ke model deskripsi (π) |",
+              "|---|---|---|---|---|---|---|---|"]
+        for label, e in evals.items():
+            p_, b_ = e["point"], e["boot"]
+            g = lambda k: ci(p_[k], pctl([x[k] for x in b_]))
+            L.append(f"| {label}{e['note']} | {g('recall')} | {g('fpr')} | {g('video_recall')} | {fmt(p_['call_data'], 2)} | "
+                     f"{g('call')} | {fmt(p_['latency_s'], 2)} s | {fmt(p_['pass_frac'], 2)} |")
+        L += ["", "Biaya total per frame (detik) = waktu deteksi + beban ke model deskripsi × D, dengan **D = waktu model deskripsi per frame yang lolos** "
+              "(titik estimasi, π):", "", "| Strategi | " + " | ".join(f"D = {d:g} s" for d in a.description_seconds) + " |",
+              "|---|" + "---|" * len(a.description_seconds)]
+        for label, e in evals.items():
+            L.append(f"| {label} | " + " | ".join(fmt(e["point"]["latency_s"] + e["point"]["pass_frac"] * d, 2) for d in a.description_seconds) + " |")
+        L += ["", "Titik impas (D yang membuat dua strategi sama mahal). Ini hanya membandingkan **biaya**; recall tiap strategi berbeda "
+              "(lihat tabel pertama), jadi strategi yang lebih murah belum tentu setara kualitasnya:", ""]
+        crossovers = {}
+        pt = {label: (e["point"]["latency_s"], e["point"]["pass_frac"]) for label, e in evals.items()}
+        for label in list(evals)[1:]:
+            pairs = [(label, ref_yolo)] + ([(label, ref_llm)] if label != ref_llm else [])
+            for x, y_ in pairs:
+                text = cost_crossover(x, *pt[x], y_, *pt[y_])
+                crossovers[f"{x} vs {y_}"] = text
+                L.append(f"- {text}")
+        L += ["", "Konfigurasi (dibekukan dari calibration):", ""]
+        for label, e in evals.items():
+            pr = e["params"]
+            desc = (f"lolos jika skor ≥ {pr['t']:.6f}" if e["kind"] != "cascade" else describe_cascade(pr))
+            L.append(f"- **{label}**: {desc}")
+        L += ["", "Selisih berpasangan (test):", "",
+              "| Gabungan vs | Δ recall | Δ FPR | Δ panggilan LLM/frame (π) | Δ waktu deteksi/frame (π, detik) |", "|---|---|---|---|---|"]
+        ysum = {}
+        for label in list(evals)[2:]:
+            for ref in (ref_llm, ref_yolo):
+                dr, df_, dc, dl = (delta(label, ref, k) for k in ("recall", "fpr", "call", "latency_s"))
+                L.append(f"| {label} vs {ref} | {ci(*dr)} | {ci(*df_)} | {ci(*dc)} | {ci(*dl)} |")
+            ysum[label] = {"params": evals[label]["params"], "test": {k: v for k, v in evals[label]["point"].items()},
+                           "vs_llm_recall": delta(label, ref_llm, "recall"), "vs_yolo_recall": delta(label, ref_yolo, "recall"),
+                           "vs_llm_call": delta(label, ref_llm, "call")}
+        L += ["", "Pembacaan otomatis:", ""]
+        for label in list(evals)[2:]:
+            dr_l, dr_y = delta(label, ref_llm, "recall"), delta(label, ref_yolo, "recall")
+            dc_l = delta(label, ref_llm, "call")
+
+            def word(dv):
+                lo, hi = dv[1]
+                return "tidak terukur" if math.isnan(lo) or math.isnan(hi) else \
+                    "lebih tinggi" if lo > 0 else "lebih rendah" if hi < 0 else "tidak berbeda nyata"
+            saving = -dc_l[0] / 1.0 * 100
+            L.append(f"- **{label}**: memakai LLM pada {fmt(evals[label]['point']['call'], 2)} frame (π) dibanding 1,00 untuk LLM saja, "
+                     f"yaitu hemat sekitar {saving:.0f}% panggilan; recall {word(dr_l)} dibanding {ref_llm} (Δ {ci(*dr_l)}) "
+                     f"dan {word(dr_y)} dibanding {ref_yolo} (Δ {ci(*dr_y)}).")
+        L.append("")
+        summary["yolo"][yn] = {"yolo_seconds": yolo_s, "strategies": {k: {"params": v["params"], "test": v["point"], "kind": v["kind"]} for k, v in evals.items()},
+                               "paired": ysum, "cost_crossover": crossovers}
+    L += ["## Batasan", "",
+          "- Pilihan konfigurasi memakai grid kasar di calibration yang kecil; ada risiko menyesuaikan diri dengan sampel itu. Karena itu hasilnya dinilai di test yang terpisah, "
+          "dan tetap perlu dikonfirmasi pada data kantor.",
+          "- Frame dengan skor YOLO di bawah ambang bawah tidak pernah sampai ke LLM, jadi gabungan tidak bisa menyelamatkan orang yang sama sekali tidak terdeteksi YOLO "
+          "kecuali ambang bawahnya 0.",
+          "- Waktu per frame diukur di mesin pengujian (sebagian LLM berjalan di CPU); ukur ulang di perangkat produksi. Angka π adalah asumsi, bukan pengukuran.",
+          "- LLM tidak memberi kotak atau estimasi kecepatan orang; gabungan tetap memerlukan YOLO untuk itu.", ""]
+    (out / "cascade_report.md").write_text("\n".join(L), encoding="utf-8")
+    (out / "cascade_summary.json").write_text(json.dumps(summary, indent=2, default=float), encoding="utf-8")
     print("\n".join(L))
     print(f"\nWritten to {out}/")
 
@@ -958,6 +1405,9 @@ def main(argv=None):
     lb.add_argument("--labels", required=True)
     lb.add_argument("--port", type=int, default=8765)
     lb.add_argument("--no-browser", action="store_true")
+    lb.add_argument("--review", metavar="CSV",
+                    help="re-judge only the frames listed in this CSV (frame_id column, e.g. disagreements_*.csv), "
+                         "blind to scores and to the earlier label")
     lb.set_defaults(fn=cmd_label)
 
     c = sub.add_parser("score", help="score every labeled frame with YOLO and/or the LLM")
@@ -977,12 +1427,35 @@ def main(argv=None):
     z.add_argument("--scores", required=True)
     z.add_argument("--out", required=True)
     z.add_argument("--reference", help="detector name to compare against (default: the YOLO one)")
+    z.add_argument("--detectors", help="comma-separated detector names (prefix match) to analyze, e.g. yolo,llm:qwen3-vl:4b-instruct")
+    z.add_argument("--fpr-targets", type=float, nargs="*", default=[0.10, 0.20],
+                   help="false-positive rates at which recall is compared (default 0.10 0.20)")
+    z.add_argument("--ref-threshold", type=float, default=0.25, help="threshold for the reference detector in the agreement table")
+    z.add_argument("--other-threshold", type=float, default=0.5, help="threshold for the other detectors in the agreement table")
     z.add_argument("--recall-target", type=float, default=0.95)
     z.add_argument("--margin", type=float, default=0.02, help="allowed recall loss for non-inferiority")
     z.add_argument("--reference-thresholds", type=float, nargs="*", default=[0.25, 0.5])
     z.add_argument("--n-boot", type=int, default=2000)
     z.add_argument("--seed", type=int, default=20260929)
     z.set_defaults(fn=cmd_analyze)
+
+    ca = sub.add_parser("cascade", help="simulate YOLO first, LLM only for uncertain frames, from the recorded scores")
+    ca.add_argument("--labels", required=True)
+    ca.add_argument("--scores", required=True)
+    ca.add_argument("--out", required=True)
+    ca.add_argument("--yolo", help="comma-separated YOLO detector names (default: all YOLO detectors in the scores file)")
+    ca.add_argument("--llm", help="LLM detector name (default: the first one with valid scores)")
+    ca.add_argument("--recall-targets", type=float, nargs="*", default=[0.90, 0.95, 0.98])
+    ca.add_argument("--max-fpr", type=float, default=0.20, help="false-positive budget used to choose every operating point")
+    ca.add_argument("--person-share", type=float, default=0.2,
+                    help="assumed share of frames that contain a person in real CCTV (cost and load are recomputed for it)")
+    ca.add_argument("--description-seconds", type=float, nargs="*", default=[2, 5, 10, 20, 40],
+                    help="assumed time of the description model per frame that passes the gate (for the total-cost table)")
+    ca.add_argument("--yolo-seconds", type=float, help="override the median YOLO latency")
+    ca.add_argument("--llm-seconds", type=float, help="override the median LLM latency")
+    ca.add_argument("--n-boot", type=int, default=2000)
+    ca.add_argument("--seed", type=int, default=20260929)
+    ca.set_defaults(fn=cmd_cascade)
 
     a = ap.parse_args(argv)
     a.fn(a)

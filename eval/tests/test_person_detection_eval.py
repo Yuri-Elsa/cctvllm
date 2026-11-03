@@ -11,6 +11,7 @@ metrics equal an independent recomputation from the raw files.
 """
 import csv
 import json
+import re
 import math
 import os
 import subprocess
@@ -22,6 +23,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import numpy as np
+
+for _stream in (sys.stdout, sys.stderr):        # Windows consoles default to cp1252; messages may contain symbols
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
 
 HERE = Path(__file__).resolve().parent
 EVAL = HERE.parent
@@ -87,6 +94,19 @@ def unit_tests():
         got = pde.read_labels(f)
         check([r["frame_id"] for r in got] == ["a", "b"] and [r["y"] for r in got] == [1, 0] and got[0]["difficulty"] == "small",
               "labels saved by Excel (BOM, semicolons) are read; blank labels ignored")
+
+    # LLM probabilities saturate near 1: only a threshold taken from the data separates these classes
+    ys = np.array([1] * 40 + [0] * 30)
+    sl = np.array([0.999985] * 40 + [0.99995] * 30)
+    params, reached, best = pde.select_cascade(ys, np.zeros(70), sl, 0.95, 0.2, 0.2)
+    check(reached and best[3] == 1.0 and best[4] == 0.0 and 0.99995 < params["t_llm"] <= 0.999985,
+          f"cascade grid follows the saturated LLM scores (picked t_llm {params['t_llm']})")
+    check("untuk berapa pun D" in pde.cost_crossover("A", 1.0, 0.3, "B", 2.0, 0.5)
+          and "tidak pernah lebih murah" in pde.cost_crossover("A", 3.0, 0.6, "B", 1.0, 0.5),
+          "cost crossover: dominated and dominating cases")
+    txt = pde.cost_crossover("LLM", 3.381, 0.32, "YOLO", 0.348, 0.55)
+    check("D > 13.2 s" in txt, f"cost crossover: slow-but-selective detector wins when description is expensive ({txt[:70]})")
+    check("D < 13.5 s" in pde.cost_crossover("A", 0.3, 0.5, "B", 3.0, 0.3), "cost crossover: fast-but-leaky detector wins when description is cheap")
 
     y, s = np.array([0, 0, 1, 1]), np.array([.1, .4, .35, .8])
     check(close(pde.roc_auc(y, s), 0.75) and close(pde.average_precision(y, s), 5 / 6), "AUC and AP on a known example")
@@ -270,6 +290,183 @@ def label_tool():
         server.shutdown()
         server.server_close()
 
+        # ---- review mode: only the listed frames, blind, with the old label kept for traceability
+        rev_csv = d / "labels_review.csv"
+        rlines = ["f0;frames/f0.png;v1;Abuse;1.0;test;1;small;", "f1;frames/f1.png;v1;Abuse;2.0;test;;;",
+                  "f2;frames/f2.png;v2;Normal;3.0;calibration;0;;", "f3;frames/f3.png;v2;Normal;4.0;calibration;0;;",
+                  "f4;frames/f3.png;v3;Normal;5.0;test;1;;"]
+        rev_csv.write_bytes(("\ufeff" + header + "\r\n" + "\r\n".join(rlines) + "\r\n").encode("utf-8"))
+        only = d / "disagreements.csv"
+        only.write_text("frame_id,path,split,has_person,yolo_score,llm_score,case\nf0,x,test,1,0.9,0.1,a\nf2,x,test,0,0.1,0.9,b\n"
+                        "f4,x,test,1,0.0,0.9,c\nghost,x,test,1,0,0,d\n", encoding="utf-8")
+        rsrv = pde.make_label_server(rev_csv, 0, review=only)
+        threading.Thread(target=rsrv.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{rsrv.server_address[1]}"
+        check(rsrv.review_count == 3 and rsrv.review_skipped == 1, "review: 3 listed frames found, 1 unknown id skipped")
+        body = get("/api/state")[1]
+        st = json.loads(body)
+        ids = sorted(i["id"] for i in st["items"])
+        check(st["review"] is True and ids == ["f0", "f2", "f4"] and all(i["y"] == "" and i["before"] == "" for i in st["items"]),
+              "review: only listed frames, earlier labels hidden")
+        check("score" not in body.decode() and "Abuse" not in body.decode(), "review: no scores or class names are sent")
+        check(post({"id": "f1", "y": "1", "tags": ""})[0] == 400, "review: frames outside the review set are rejected")
+        check(post({"id": "f0", "y": "0", "tags": "small"})[0] == 200, "review: decision saved")
+        fields, raw = pde.read_csv_rows(rev_csv)
+        r_ = {r["frame_id"]: r for r in raw}
+        check(r_["f0"]["has_person"] == "0" and r_["f0"]["label_before_review"] == "1" and "label_before_review" in fields,
+              "review: new label stored, old label kept in label_before_review")
+        check(r_["f1"]["has_person"] == "" and r_["f3"]["has_person"] == "0" and r_["f4"]["has_person"] == "1" and r_["f4"]["label_before_review"] == "",
+              "review: other frames untouched")
+        post({"id": "f2", "y": "0", "tags": ""})
+        post({"id": "f4", "y": "", "tags": "dark"})                      # tags only: no decision yet
+        raw = pde.read_csv_rows(rev_csv)[1]
+        r_ = {r["frame_id"]: r for r in raw}
+        check(r_["f2"]["label_before_review"] == "0" and r_["f4"]["difficulty"] == "dark" and r_["f4"]["has_person"] == "1"
+              and r_["f4"]["label_before_review"] == "", "review: same label recorded as reviewed; tag-only edit is not a decision")
+        items = {i["id"]: i for i in json.loads(get("/api/state")[1])["items"]}
+        check(items["f0"]["y"] == "0" and items["f0"]["before"] == "1" and items["f4"]["y"] == "", "review: state shows reviewed frames only")
+        post({"id": "f0", "y": "", "tags": "small"})                     # undo
+        raw = pde.read_csv_rows(rev_csv)[1]
+        r_ = {r["frame_id"]: r for r in raw}
+        check(r_["f0"]["has_person"] == "1" and r_["f0"]["label_before_review"] == "", "review: clearing restores the old label")
+        rsrv.shutdown()
+        rsrv.server_close()
+
+
+# ------------------------------------------------------------------ 5. analysis scenarios (no images needed)
+
+def analysis_scenarios():
+    rng = np.random.default_rng(5)
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        rows, recs = [], []
+        for v in range(60):
+            split = "calibration" if v < 20 else "test"
+            for k in range(4):
+                fid, y = f"v{v:03d}_{k}", int(k < 2)
+                rows.append({"frame_id": fid, "path": f"frames/{fid}.png", "video_id": f"v{v:03d}", "class_name": "X",
+                             "timestamp": k, "split": split, "has_person": str(y), "difficulty": "", "notes": ""})
+                if y:   # "yolo": half of the people get no score at all (below the logging floor)
+                    ys = 0.0 if rng.random() < 0.5 else rng.uniform(0.5, 0.95)
+                    ls = rng.uniform(0.9, 1.0) if rng.random() < 0.97 else rng.uniform(0, 0.2)
+                else:
+                    ys = 0.0 if rng.random() < 0.9 else rng.uniform(0.1, 0.4)
+                    ls = rng.uniform(0, 0.1) if rng.random() < 0.85 else rng.uniform(0.8, 1.0)
+                recs += [{"frame_id": fid, "detector": "yolo:x", "score": float(ys), "latency_s": 0.05},
+                         {"frame_id": fid, "detector": "llm:good", "score": float(ls), "latency_s": 3.0},
+                         {"frame_id": fid, "detector": "llm:broken", "score": None, "error": "HTTP 404"}]
+        labels, scores = d / "labels.csv", d / "scores.jsonl"
+        with open(labels, "w", newline="", encoding="utf-8") as f:
+            wr = csv.DictWriter(f, fieldnames=pde.LABEL_FIELDS)
+            wr.writeheader()
+            wr.writerows(rows)
+        scores.write_text("\n".join(json.dumps(r) for r in recs), encoding="utf-8")
+        out = d / "report"
+        code, log = run(["analyze", "--labels", str(labels), "--scores", str(scores), "--out", str(out), "--n-boot", "400",
+                         "--fpr-targets", "0.1", "0.2"])
+        check(code == 0, f"analyze on scenario data exits 0 ({log[-300:] if code else 'ok'})")
+        report = (out / "person_report.md").read_text(encoding="utf-8")
+        summary = json.loads((out / "summary.json").read_text())
+        check(set(summary["detectors"]) == {"yolo:x", "llm:good"} and "llm:broken: tidak punya satu pun skor valid" in report,
+              "a detector whose every call failed is excluded, with a note")
+        check("yolo:x: pada target recall 95% threshold yang terpilih meloloskan hampir semua frame" in report
+              and summary["detectors"]["yolo:x"]["test"]["fpr"]["value"] >= 0.95,
+              "degenerate frozen threshold (YOLO misses people entirely) is flagged")
+
+        by = {}
+        for r in recs:
+            by[(r["frame_id"], r["detector"])] = r["score"]
+        lab = {r["frame_id"]: r for r in rows}
+        for det in ("yolo:x", "llm:good"):
+            neg = sorted((by[(f, det)] for f in lab if lab[f]["split"] == "calibration" and lab[f]["has_person"] == "0"))
+            for target in (0.1, 0.2):
+                best = None
+                for tt in sorted(set(neg) | {by[(f, det)] for f in lab if lab[f]["split"] == "calibration"}, reverse=True):
+                    if sum(1 for s in neg if s >= tt) / len(neg) > target + 1e-12:
+                        break
+                    best = tt
+                expect = pde.floor6(best) if best is not None else 1.000001
+                got = summary["detectors"][det]["fpr_ops"][str(target)]
+                check(close(got["threshold"], expect, 1e-9), f"{det}: threshold for FPR<={target} equals independent value {expect}")
+                tst = [f for f in lab if lab[f]["split"] == "test"]
+                tp = sum(1 for f in tst if lab[f]["has_person"] == "1" and by[(f, det)] >= expect)
+                fp = sum(1 for f in tst if lab[f]["has_person"] == "0" and by[(f, det)] >= expect)
+                check(got["counts"]["tp"] == tp and got["counts"]["fp"] == fp, f"{det}: matched-FPR test counts tp={tp} fp={fp} match")
+        d10 = summary["detectors"]["llm:good"]["fpr_ops"]["0.1"]["delta_vs_reference"]["recall"]
+        check(d10["ci"][0] > 0 and "**lebih baik** dibanding yolo:x" in report,
+              f"LLM recall at matched FPR is shown as better than YOLO (delta {d10['value']:.2f}, CI lower {d10['ci'][0]:.2f})")
+        check("| Detektor | Threshold | Recall frame | Presisi | FPR | Recall video (gate) |" in report,
+              "fixed-threshold table includes video-level recall")
+
+        dis = list(csv.DictReader(open(out / "disagreements_llm_good.csv", encoding="utf-8")))
+        expect_n = sum(1 for f in lab if (by[(f, "yolo:x")] >= 0.25) != (by[(f, "llm:good")] >= 0.5))
+        check(len(dis) == expect_n and {"frame_id", "has_person", "case"} <= set(dis[0]), f"disagreements.csv lists {expect_n} frames")
+        check("Kesepakatan detektor" in report, "agreement table in report")
+        rsrv = pde.make_label_server(labels, 0, review=out / "disagreements_llm_good.csv")
+        check(rsrv.review_count == len(dis) and rsrv.review_skipped == 0,
+              f"the disagreements file produced by analyze is accepted by label --review ({rsrv.review_count} frames)")
+        rsrv.server_close()
+
+        code, log = run(["analyze", "--labels", str(labels), "--scores", str(scores), "--out", str(d / "r2"),
+                         "--detectors", "yolo", "--n-boot", "100"])
+        s2 = json.loads((d / "r2" / "summary.json").read_text())
+        check(code == 0 and set(s2["detectors"]) == {"yolo:x"} and not s2["deltas_vs_reference"], "--detectors filters (prefix match)")
+
+        # ---- cascade simulation (YOLO first, LLM for the uncertain band)
+        for kind_params in ({"t_lo": 0.0, "t_hi": math.inf, "t_llm": 0.9},):
+            sy = np.array([by[(f, "yolo:x")] for f in lab])
+            sl = np.array([by[(f, "llm:good")] for f in lab])
+            pas, call = pde.cascade_decision("cascade", kind_params, sy, sl)
+            ref_pas, ref_call = pde.cascade_decision("llm", {"t": 0.9}, sy, sl)
+            check((pas == ref_pas).all() and call.all(), "cascade with open band (0, inf) equals the LLM alone and calls it on every frame")
+        pas, call = pde.cascade_decision("cascade", {"t_lo": 0.2, "t_hi": 0.8, "t_llm": 0.5}, np.array([0.1, 0.2, 0.5, 0.8, 0.9]),
+                                         np.array([0.9, 0.4, 0.6, 0.0, 0.0]))
+        check(list(pas) == [False, False, True, True, True] and list(call) == [False, True, True, False, False],
+              "cascade rules: below band rejected, band asks the LLM, at or above the high threshold accepted without it")
+
+        cdir = d / "cascade"
+        code, log = run(["cascade", "--labels", str(labels), "--scores", str(scores), "--out", str(cdir), "--n-boot", "300"])
+        check(code == 0, f"cascade exits 0 ({log[-300:] if code else 'ok'})")
+        csum = json.loads((cdir / "cascade_summary.json").read_text())
+        creport = (cdir / "cascade_report.md").read_text(encoding="utf-8")
+        check("Biaya total per frame" in creport and "Titik impas" in creport and csum["yolo"]["yolo:x"]["cost_crossover"],
+              "cascade report includes the total-cost table and break-even lines")
+        check(csum["llm"] == "llm:good" and list(csum["yolo"]) == ["yolo:x"] and "Pembacaan otomatis" in creport
+              and (cdir / "cascade_grid_yolo_x.csv").exists(), "cascade: broken detector ignored, report and grid written")
+        strat = csum["yolo"]["yolo:x"]["strategies"]
+        check(strat["llm:good saja"]["test"]["call"] == 1.0 and strat["yolo:x saja"]["test"]["call"] == 0.0,
+              "LLM alone costs 1 call per frame, YOLO alone none")
+        for label, e in strat.items():
+            if e["kind"] != "cascade":
+                continue
+            p_ = e["params"]
+            def run_split(split):
+                tp = fp = fn = tn = cp = cn = npos = nneg = 0
+                for f in lab:
+                    if lab[f]["split"] != split:
+                        continue
+                    sy_, sl_ = by[(f, "yolo:x")], by[(f, "llm:good")]
+                    c_ = p_["t_lo"] <= sy_ < p_["t_hi"]
+                    ps_ = sy_ >= p_["t_hi"] or (c_ and sl_ >= p_["t_llm"])
+                    if lab[f]["has_person"] == "1":
+                        npos += 1; cp += c_; tp += ps_; fn += (not ps_)
+                    else:
+                        nneg += 1; cn += c_; fp += ps_; tn += (not ps_)
+                return tp, fp, fn, tn, cp, cn, npos, nneg
+            tp, fp, fn, tn, cp, cn, npos, nneg = run_split("test")
+            t_ = e["test"]
+            check(close(t_["recall"], tp / (tp + fn)) and close(t_["fpr"], fp / (fp + tn)) and close(t_["call_data"], (cp + cn) / (npos + nneg)),
+                  f"{label}: recall, FPR and LLM-call share on test match an independent recomputation")
+            check(close(t_["call"], 0.2 * cp / npos + 0.8 * cn / nneg) and close(t_["latency_s"], 0.05 + t_["call"] * 3.0, 1e-9),
+                  f"{label}: person-share weighted calls and latency (0.05 s + calls x 3 s) are right")
+            ctp, cfp, cfn, ctn, *_ = run_split("calibration")
+            target = max(int(v) for v in re.findall(r"(\d+)%", label)) / 100          # the strictest target sharing this row
+            within = ctp / (ctp + cfn) >= target - 1e-9 and cfp / (cfp + ctn) <= 0.2 + 1e-9
+            check(within or "tidak tercapai di calibration" in creport, f"{label}: chosen configuration meets its constraints on the calibration split")
+
+        code, log = run(["cascade", "--labels", str(labels), "--scores", str(scores), "--out", str(d / "c2"), "--person-share", "1.5"])
+        check(code != 0 and "--person-share" in log and "Traceback" not in log, "cascade: invalid --person-share -> clear error")
+
 
 # ------------------------------------------------------------------ 3. end to end
 
@@ -438,5 +635,6 @@ def e2e():
 if __name__ == "__main__":
     unit_tests()
     label_tool()
+    analysis_scenarios()
     e2e()
     print("\nAll checks passed.")

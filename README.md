@@ -458,6 +458,24 @@ python eval/analyze_app_eval.py --results eval/runs/app_v1/results.jsonl \
 - `eval/settings*.json` hold the settings applied before a run (`settings.example.json` is the template).
 - Outputs go to `eval/runs/`, which is git-ignored.
 
+### Comparing configurations and thresholds
+
+```bash
+# same clips for every run: Gemma baseline vs Qwen on the 47-clip subset (add --stratum main for the 38 main clips)
+python eval/compare_runs.py --manifest eval/runs/subset47/subset_manifest.csv \
+    gemma=eval/runs/subset47/baseline_subset.jsonl qwen16=eval/runs/qwen4b_instruct_16f/results.jsonl
+
+# ablation: flags decided in a separate short call (eval/settings_gemma_split.json), then re-threshold from the p(yes) scores
+python eval/run_app_eval.py --manifest eval/runs/subset47/subset_manifest.csv --video-root D:/ucf \
+    --settings eval/settings_gemma_split.json --out eval/runs/gemma_split
+python eval/threshold_sweep.py --results eval/runs/gemma_split/results.jsonl --target-recall 0.9
+python eval/threshold_sweep.py --results eval/runs/gemma_split/results.jsonl --score-field classifier_score
+```
+
+- `run_app_eval.py` now records `suspicious_score`, `classifier_score`, `narrative_score`, `score_source` and `scene_mode`. Runs made before this have no scores and cannot be re-thresholded.
+- `threshold_sweep.py` prints the AUC, the curve and the picks, and a cross-validated recall. Quote the cross-validated line: the other picks choose the threshold on the clips they are measured on.
+- The **Separate flag call** setting decides `suspicious` and `weapon` in a short dedicated call over the same frames, instead of at the end of the narrative call. It roughly doubles the model calls. The narrative's own flag can still raise a video.
+
 ## Known limitations
 
 - Accuracy on real footage has not been established. Compare configurations on your own clips before relying on results, and expect differences from any notebook experiment (FFmpeg vs OpenCV decoding, Ollama quantisation, image preprocessing).

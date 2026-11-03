@@ -112,7 +112,9 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
         SuspiciousThreshold = config.SuspiciousThreshold,
         SuspiciousModelAnswer = r.ModelSuspicious ?? r.Suspicious,
         SuspiciousDecision = r.Suspicious,
-        ScoreSource = r.ScoreSource ?? "none"
+        ScoreSource = r.ScoreSource ?? "none",
+        NarrativeScore = r.NarrativeScore,
+        ClassifierScore = r.ClassifierScore
     };
     private async Task ReanalyzeWithMoreFrames(string id, ModelSettings config, CancellationToken ct)
     {
@@ -200,6 +202,9 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
         return string.IsNullOrWhiteSpace(config.FlagActivity)
             ? result : await ReviewCustomFlag(job, config, result, ct);
     }
+    // Scene mode: nobody was detected, so there are no person frames to choose from. Send a few evenly spaced plain
+    // frames instead, so objects (a weapon on a table) and events (fire, smoke) in an empty scene still reach the model.
+    // The job is not marked NoPeople because the model did run on it.
     private async Task<DescriptionResult> DescribeScene(VideoJob job, ModelSettings config, double modelGap,
         ScreeningLog person, CancellationToken ct)
     {
@@ -229,7 +234,8 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
         return (indices.Select(i => paths[i]).ToArray(), indices.Select(i => timestamps[i]).ToArray());
     }
 
-    private const string SceneNote =
+    // Replaces the people-oriented parts of the base prompt for scene mode. Sent with every batch of such a video.
+    internal const string SceneNote =
         "MODE ADEGAN: detektor orang tidak menemukan siapa pun pada video ini, sehingga gambar-gambar ini diambil dengan jarak waktu yang sama rata dari seluruh video. " +
         "Abaikan bagian instruksi tentang orang, kotak deteksi, dan kecepatan gerak. Periksa adegan itu sendiri: senjata atau benda berbahaya (misalnya pistol atau pisau di atas meja atau lantai, meskipun tidak ada orang di dekatnya), " +
         "api, asap, percikan, cairan tumpah atau banjir, kaca pecah, pintu atau jendela yang rusak atau terbuka paksa, benda jatuh atau berantakan, serta perubahan antar-gambar. " +
@@ -345,6 +351,7 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
             offset += count;
         }
         if (summary is null || processed != paths.Length) throw new UserError("Not all selected frames were described.", 502);
+        if (config.SeparateClassification) summary = await Reclassify(job, config, summary, paths, batchSize, scene, ct);
         var raw = JsonSerializer.Serialize(new
         {
             activity_description = summary.Description,
@@ -352,6 +359,27 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
             weapon = summary.Weapon
         });
         return summary with { Timestamps = timestamps, Raw = raw };
+    }
+    private async Task<DescriptionResult> Reclassify(VideoJob job, ModelSettings config, DescriptionResult summary,
+        string[] paths, int groupSize, bool scene, CancellationToken ct)
+    {
+        using var client = Client();
+        var groups = paths.Chunk(Math.Max(1, groupSize)).ToArray();
+        var verdict = await FlagClassifier.Run(client, config, groups, scene,
+            (done, total) => store.Update(job.Id, j => j with { Stage = $"Classifying frames {done}/{total}" }), ct);
+        var answer = summary.ModelSuspicious == "yes" || verdict.Suspicious == "yes" ? "yes" : "no";
+        var score = MaxScore(summary.SuspiciousScore, verdict.Score);
+        var (decision, used) = Scoring.Decide(answer, score, config.SuspiciousThreshold);
+        return summary with
+        {
+            Suspicious = decision,
+            ModelSuspicious = answer,
+            SuspiciousScore = used,
+            ScoreSource = used is null ? null : "logprobs",
+            Weapon = !config.WeaponEnabled ? null : summary.Weapon == "yes" || verdict.Weapon == "yes" ? "yes" : "no",
+            NarrativeScore = summary.SuspiciousScore,
+            ClassifierScore = verdict.Score
+        };
     }
     private static double? MaxScore(double? a, double? b) => a is null ? b : b is null ? a : Math.Max(a.Value, b.Value);
     private async Task<DescriptionResult> DescribeImages(VideoJob job, ModelSettings config,
@@ -747,5 +775,6 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
         throw new UserError("The model returned incomplete or invalid JSON. Its raw response was saved; retry this video.", 502);
     }
     private sealed record DescriptionResult(string Description, string? Suspicious, string? Weapon, string Raw, double[] Timestamps, string? ModelName = null, bool NoPeople = false,
-        double? SuspiciousScore = null, string? ModelSuspicious = null, string? ScoreSource = null, ScreeningLog? Person = null);
+        double? SuspiciousScore = null, string? ModelSuspicious = null, string? ScoreSource = null, ScreeningLog? Person = null,
+        double? NarrativeScore = null, double? ClassifierScore = null);
 }

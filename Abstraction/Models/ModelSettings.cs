@@ -14,4 +14,5 @@ public sealed record ModelSettings(string Mode = "local", string Endpoint = "htt
     public bool AgentEnabled { get; init; } = true;
     public bool SceneMode { get; init; }
     public int SceneFrames { get; init; } = 4;
+    public bool SeparateClassification { get; init; }
 }

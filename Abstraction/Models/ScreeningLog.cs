@@ -30,6 +30,8 @@ public sealed record ScreeningLog
     public string? SuspiciousModelAnswer { get; init; }
     public string? SuspiciousDecision { get; init; }
     public string ScoreSource { get; init; } = "none";
+    public double? NarrativeScore { get; init; }
+    public double? ClassifierScore { get; init; }
 
     public AgentLog? Agent { get; init; }
 }

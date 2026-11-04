@@ -113,7 +113,11 @@ def main():
         check(row.positive_recall_all_ci_lo <= row.positive_recall_all <= row.positive_recall_all_ci_hi,
               "bootstrap interval brackets recall")
         report = (out / "report" / "report.md").read_text(encoding="utf-8")
-        check("0.629" in report and "0.914" in report, "report cites both notebook reference points")
+        # this run is far smaller than the notebook's 91-clip test/main, so the hard-coded notebook rows are not comparable
+        check("Notebook, flag yes/no" not in report and "Notebook, threshold" not in report,
+              "hard-coded full-set notebook rows are left out of a smaller run")
+        check("Baris notebook dihilangkan" in report and "--notebook-predictions" in report,
+              "report says why the notebook rows are missing and how to get them")
         check("upload_rejected" in report and "failed" in report, "report lists invalid reasons")
 
         # ---- threshold sweep over the recorded p(yes)
@@ -174,8 +178,50 @@ def main():
         code, log = run([str(EVAL / "analyze_app_eval.py"), "--results", str(out / "results.jsonl"), "--manifest",
                          str(manifest), "--out", str(out / "report2"), "--n-boot", "300",
                          "--notebook-predictions", str(nbp)])
-        check(code == 0 and "Perbandingan berpasangan" in (out / "report2" / "report.md").read_text(encoding="utf-8"),
-              "paired comparison section produced")
+        rep_nb = (out / "report2" / "report.md").read_text(encoding="utf-8")
+        check(code == 0 and "Perbandingan berpasangan" in rep_nb, "paired comparison section produced")
+
+        # notebook rows are recomputed on the same clips (here every clip) from per-video predictions
+        n_main_test = len(main_rows)
+        nb_by = {r["clip_id"]: r for r in rows}
+        check(f"Notebook, flag yes/no (gated_8; {n_main_test} klip yang sama)" in rep_nb
+              and f"Notebook, threshold 0.0049 ({n_main_test} klip yang sama)" in rep_nb,
+              "notebook rows are labelled with the number of shared clips")
+        n_pos_main = sum(1 for r in main_rows if r["expected_suspicious"])
+        n_neg_main = n_main_test - n_pos_main
+        check(f"{n_pos_main}/0/0/{n_neg_main}" in rep_nb,
+              f"perfect synthetic notebook gives TP/FN/FP/TN = {n_pos_main}/0/0/{n_neg_main} on the same clips")
+
+        # a notebook that only ran some of the app's clips: rows and the app row are restricted to the overlap
+        keep = {r["clip_id"] for r in main_rows[:12]}
+        nb_part = tmp / "nb_part.jsonl"
+        with nb_part.open("w", encoding="utf-8") as f:
+            for line in nbp.read_text(encoding="utf-8").splitlines():
+                if json.loads(line)["clip_id"] in keep:
+                    f.write(line + "\n")
+        code, log = run([str(EVAL / "analyze_app_eval.py"), "--results", str(out / "results.jsonl"), "--manifest",
+                         str(manifest), "--out", str(out / "report3"), "--n-boot", "300",
+                         "--notebook-predictions", str(nb_part)])
+        rep_part = (out / "report3" / "report.md").read_text(encoding="utf-8") if code == 0 else log
+        sub_main = [r for r in main_rows if r["clip_id"] in keep]
+        check(code == 0 and f"({len(sub_main)} klip yang sama)" in rep_part and "dibatasi ke irisan" in rep_part,
+              f"partial notebook coverage limits both sides to the {len(sub_main)} shared clips")
+        check("Notebook, flag yes/no (gated_8)" not in rep_part and "slide: 0.914" not in rep_part,
+              "hard-coded rows never mix into a per-video comparison")
+
+        # unit check of the reference chooser: full-size group keeps the hard-coded numbers, others do not
+        import pandas as pd
+        sys.path.insert(0, str(EVAL))
+        import analyze_app_eval as aae  # noqa: E402
+        def grp(n, pos):
+            return pd.DataFrame({"clip_id": [f"c{i}" for i in range(n)], "expected_suspicious": [i < pos for i in range(n)]})
+        full = aae.notebook_reference("main", grp(91, 70), None, "gated_8", 0.0049)
+        check(full.source == "bawaan" and len(full.rows) == 4 and full.note is None, "full 91/70 test/main uses the hard-coded rows")
+        check(abs(aae.from_counts(full.thr)["recall"] - 64 / 70) < 1e-12, "hard-coded threshold row recall is 64/70")
+        small = aae.notebook_reference("main", grp(38, 30), None, "gated_8", 0.0049)
+        check(small.rows == [] and small.note and "38 klip" in small.note, "38-clip group gets no hard-coded rows")
+        same_n = aae.notebook_reference("main", grp(91, 60), None, "gated_8", 0.0049)
+        check(same_n.rows == [], "91 clips with a different positive count are not treated as the notebook set")
 
         # incomplete results must be refused
         part = tmp / "partial.jsonl"

@@ -16,6 +16,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -28,6 +29,9 @@ for _stream in (sys.stdout, sys.stderr):
 # Numbers printed by evaluation.ipynb on test/main (91 videos: 70 positive, 21 Normal) and
 # test/person_optional (21 positive). Sources: cell 16/18 (fixed yes/no flag) and cell 20
 # (threshold 0.004905 on p_yes_binary, selected on calibration/main to reach 0.90 recall).
+# These are full-set numbers: they are only comparable with a run over exactly that many clips
+# (FULL_SET_SIZE). For any smaller run, notebook_reference() recomputes the notebook rows from the
+# notebook's per-video predictions (--notebook-predictions) on the clips the run actually covers.
 NOTEBOOK_REFERENCE = {
     "main": {
         "Notebook, flag yes/no (gated_8)": dict(TP=44, FN=26, FP=0, TN=21, review_rate=0.4835),
@@ -40,7 +44,9 @@ NOTEBOOK_REFERENCE = {
         "Notebook, threshold 0.0049 (slide: 0.914)": dict(TP=15, FN=6, FP=0, TN=0, review_rate=0.7143),
     },
 }
-SLIDE_RECALL = 0.914
+FULL_SET_SIZE = {"main": (91, 70), "person_optional": (21, 21)}  # (clips, positives) behind NOTEBOOK_REFERENCE
+FLAG_FULL = "Notebook, flag yes/no (gated_8)"
+THR_FULL = "Notebook, threshold 0.0049 (slide: 0.914)"
 DEGENERATE_SHARE = 0.95
 
 
@@ -168,7 +174,8 @@ def bootstrap(d, n_boot, rng):
 
 def from_counts(ref):
     tp, fn, fp, tn = ref["TP"], ref["FN"], ref["FP"], ref["TN"]
-    return {"recall": ratio(tp, tp + fn), "precision": ratio(tp, tp + fp),
+    # recall over all positives; invalid notebook outputs (n_positive > tp + fn) count as misses, as in the headline table
+    return {"recall": ratio(tp, ref.get("n_positive", tp + fn)), "precision": ratio(tp, tp + fp),
             "F1": ratio(2 * tp, 2 * tp + fp + fn), "false_alarm_rate": ratio(fp, fp + tn),
             "review_rate": ref["review_rate"], "TP": tp, "FN": fn, "FP": fp, "TN": tn}
 
@@ -183,11 +190,95 @@ def paired_recall_delta(a, b, n_boot, rng):
     return float(b.mean() - a.mean()), float(np.percentile(deltas, 2.5)), float(np.percentile(deltas, 97.5))
 
 
+def group_metrics(g, n_boot, rng):
+    """Headline summary of g with its Wilson and bootstrap intervals (one row of metrics_by_split_stratum.csv)."""
+    s = summary(g)
+    ci = bootstrap(g, n_boot, rng)
+    lo, hi = wilson(s["TP"], s["n_positive"])
+    s.update(recall_wilson_lo=lo, recall_wilson_hi=hi)
+    for k, (a, b) in ci.items():
+        s[f"{k}_ci_lo"], s[f"{k}_ci_hi"] = a, b
+    fa_lo, fa_hi = wilson(s["FP"], s["FP"] + s["TN"])
+    pr_lo, pr_hi = wilson(s["TP"], s["TP"] + s["FP"])
+    s.update(false_alarm_wilson_lo=fa_lo, false_alarm_wilson_hi=fa_hi,
+             precision_wilson_lo=pr_lo, precision_wilson_hi=pr_hi)
+    return s, ci
+
+
+def _nb_counts(d):
+    s = summary(d)
+    return dict(TP=s["TP"], FN=s["FN_valid"], FP=s["FP"], TN=s["TN"], review_rate=s["review_rate_all"],
+                n_positive=s["n_positive"])
+
+
+def load_notebook_predictions(path):
+    p = Path(path)
+    nb = pd.read_json(p, lines=True) if p.suffix == ".jsonl" else pd.read_csv(p)
+    return nb.drop_duplicates("clip_id").set_index("clip_id")
+
+
+def notebook_reference(stratum, g, nb, arm, threshold):
+    """Notebook rows that are comparable with g, the test/<stratum> group of the app run.
+
+    nb given (per-video notebook predictions): the notebook rows are recomputed on exactly the clips of g that
+    the notebook also ran, with the notebook's own definitions (classification_summary / score_valid). `sub`
+    is that clip set; it equals g when the notebook covered every clip.
+    nb not given: the hard-coded full-set numbers are used only when g has exactly the size of the notebook's
+    benchmark (FULL_SET_SIZE). Otherwise there is no comparable notebook row and `note` says why.
+    Result fields: rows [(label, counts)], flag / thr (counts or None), source, sub, note.
+    """
+    ref = SimpleNamespace(rows=[], flag=None, thr=None, source="none", sub=g, note=None)
+    if nb is not None:
+        sub = g[g.clip_id.isin(nb.index)]
+        ref.sub = sub
+        if sub.empty:
+            ref.note = (f"Tidak ada klip test/{stratum} dari run ini di --notebook-predictions; "
+                        "baris notebook dihilangkan.")
+            return ref
+        ref.source = "per-video"
+        r = nb.loc[sub.clip_id]
+        y = sub.expected_suspicious.to_numpy(bool)
+        fv = (r["flag_valid"].astype(str).str.lower().eq("true").to_numpy(bool) if "flag_valid" in r
+              else np.ones(len(r), bool))
+        tag = f"{len(sub)} klip yang sama"
+        if "predicted_suspicious" in r:
+            parsed = r["predicted_suspicious"].astype(str).str.strip().str.lower().map(
+                {"yes": True, "true": True, "no": False, "false": False})
+            ref.flag = _nb_counts(pd.DataFrame({
+                "expected_suspicious": y, "valid": fv & parsed.notna().to_numpy(),
+                "parsed_flag": parsed.fillna(False).astype(bool).to_numpy()}))
+            ref.rows.append((f"Notebook, flag yes/no ({arm}; {tag})", ref.flag))
+        if "p_yes_binary" in r:
+            sc = pd.to_numeric(r["p_yes_binary"], errors="coerce")
+            ok = fv & sc.notna().to_numpy() & sc.between(0, 1).to_numpy()
+            ref.thr = _nb_counts(pd.DataFrame({
+                "expected_suspicious": y, "valid": ok, "parsed_flag": (sc >= threshold).to_numpy(bool)}))
+            ref.rows.append((f"Notebook, threshold {threshold:.4f} ({tag})", ref.thr))
+        if not ref.rows:
+            ref.source = "none"
+            ref.note = "--notebook-predictions tidak punya kolom predicted_suspicious maupun p_yes_binary."
+        elif len(sub) < len(g):
+            ref.note = (f"Notebook hanya memuat {len(sub)} dari {len(g)} klip test/{stratum} run ini; "
+                        "baris Aplikasi di tabel ini dibatasi ke irisan yang sama.")
+        return ref
+    full = FULL_SET_SIZE.get(stratum)
+    if full and (len(g), int(g.expected_suspicious.sum())) == full:
+        ref.source = "bawaan"
+        ref.rows = list(NOTEBOOK_REFERENCE[stratum].items())
+        ref.flag = NOTEBOOK_REFERENCE[stratum].get(FLAG_FULL)
+        ref.thr = NOTEBOOK_REFERENCE[stratum].get(THR_FULL)
+    else:
+        size = f"{full[0]} klip ({full[1]} positif)" if full else "set penuh"
+        ref.note = (f"Baris notebook dihilangkan: angka bawaan skrip dihitung pada {size}, sedangkan run ini "
+                    f"{len(g)} klip ({int(g.expected_suspicious.sum())} positif), sehingga tidak sebanding. "
+                    "Berikan `--notebook-predictions` (predictions.jsonl notebook) agar dihitung ulang pada klip yang sama.")
+    return ref
+
+
 # ---------------------------------------------------------------- threshold sweep
 
 MIN_POSITIVES, MIN_NEGATIVES = 10, 30      # same warning limits as the app's Calibration page
 SATURATED_HI, SATURATED_LO = 0.9999, 1e-4  # scores this close to 1 or 0 are fragile (quantisation, model update)
-NOTEBOOK_OPERATING_POINT = (0.143, 0.914)  # (false alarm, recall) of the notebook at its tuned threshold
 
 
 def curve(g):
@@ -327,7 +418,7 @@ def md_table(headers, rows):
 
 # ---------------------------------------------------------------- main
 
-def threshold_section(df, sweep, agg, run, args, rng):
+def threshold_section(df, sweep, agg, run, args, rng, nb=None):
     """Markdown lines for the threshold sweep on test/main. Threshold selection follows the person-detection
     protocol: choose on the calibration split, freeze, then score on test. Without a calibration split in the
     run only an optimistic (chosen-on-test) point can be shown, and it is labelled as such."""
@@ -357,12 +448,16 @@ def threshold_section(df, sweep, agg, run, args, rng):
     s_app, ci_app = summary(tg), bootstrap(tg, args.n_boot, rng)
     ths = sorted({round(float(x), 6) for x in tg.suspicious_threshold.dropna()}) if "suspicious_threshold" in tg else []
     rows.append(op_row("Aplikasi (flag saat run)", ths[0] if len(ths) == 1 else None, s_app, ci_app))
-    nb = from_counts(NOTEBOOK_REFERENCE["main"]["Notebook, threshold 0.0049 (slide: 0.914)"])
-    rows.append(("Notebook, threshold 0.0049 (skala skor berbeda)", "0.0049", f"{nb['recall']:.3f}",
-                 num(nb["false_alarm_rate"]), num(nb["precision"]), f"{nb['review_rate']:.3f}",
-                 f"{nb['TP']}/{nb['FN']}/{nb['FP']}/{nb['TN']}"))
+    nbref = notebook_reference("main", tg, nb, args.notebook_arm, args.notebook_threshold)
+    if nbref.thr:
+        m = from_counts(nbref.thr)
+        same = f", {len(nbref.sub)} klip yang sama" if nbref.source == "per-video" else ""
+        rows.append((f"Notebook, threshold {args.notebook_threshold:.4f} (skala skor berbeda{same})",
+                     f"{args.notebook_threshold:.4f}", f"{m['recall']:.3f}",
+                     num(m["false_alarm_rate"]), num(m["precision"]), f"{m['review_rate']:.3f}",
+                     f"{m['TP']}/{m['FN']}/{m['FP']}/{m['TN']}"))
 
-    notes = []
+    notes = [nbref.note] if nbref.note else []
     target = args.target_recall
     cal = df[df.evaluation_split.eq("calibration") & df.stratum.eq("main")]
     c_test = sweep.get(("test", "main"))
@@ -379,9 +474,13 @@ def threshold_section(df, sweep, agg, run, args, rng):
             s_t, ci_t = at_threshold(tg, t, args.n_boot, rng)
             rows.append(op_row(f"Dipilih di calibration (recall ≥ {target:.0%}), dibekukan", t, s_t, ci_t))
             rec = s_t["positive_recall_all"]
-            notes.append("Recall di titik terbekukan: "
-                         + (verdict(rec, ci_t.get("positive_recall_all"), SLIDE_RECALL, "angka di slide") or "n/a")
-                         + f"; target {target:.0%} " + ("tercapai" if rec >= target else "tidak tercapai") + " di test.")
+            ref_txt = ""
+            if nbref.thr:
+                name = ("angka di slide" if nbref.source == "bawaan"
+                        else f"notebook threshold {args.notebook_threshold:.4f} ({len(nbref.sub)} klip yang sama)")
+                ref_txt = (verdict(rec, ci_t.get("positive_recall_all"), from_counts(nbref.thr)["recall"], name) or "n/a") + "; "
+            notes.append("Recall di titik terbekukan: " + ref_txt + f"target {target:.0%} "
+                         + ("tercapai" if rec >= target else "tidak tercapai") + " di test.")
             if fragile(t):
                 notes.append(f"Threshold {t:.6g} ada di ekor jenuh (dekat 0 atau 1). Nilai sedekat itu rapuh terhadap "
                              "perubahan model, kuantisasi atau perangkat; periksa kurva dan titik yang lebih longgar sebelum dipakai.")
@@ -417,7 +516,11 @@ def main():
     ap.add_argument("--seed", type=int, default=20260929)
     ap.add_argument("--allow-incomplete", action="store_true")
     ap.add_argument("--notebook-predictions",
-                    help="notebook runs/baseline_v2/gated_8/predictions.jsonl (or .csv) for a paired per-video comparison")
+                    help="notebook runs/baseline_v2/gated_8/predictions.jsonl (or .csv). Notebook rows in the report are then "
+                         "recomputed on the clips both runs share, and a paired per-video comparison is added. "
+                         "Without it the hard-coded notebook numbers are shown only for a run of the full 91-clip test/main")
+    ap.add_argument("--notebook-arm", default="gated_8",
+                    help="label of the notebook arm that --notebook-predictions holds (used in table row names)")
     ap.add_argument("--notebook-threshold", type=float, default=0.004905405919998884,
                     help="threshold applied to the notebook's p_yes_binary for the 'tuned' arm")
     ap.add_argument("--target-recall", type=float, default=0.90,
@@ -430,23 +533,16 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(args.seed)
     df, _ = load(args.results, args.manifest, args.allow_incomplete)
+    nb = load_notebook_predictions(args.notebook_predictions) if args.notebook_predictions else None
     run_json = Path(args.run_json) if args.run_json else Path(args.results).with_name("run.json")
     run = json.loads(run_json.read_text(encoding="utf-8")) if run_json.exists() else {}
 
     # ---- tables
     agg_rows, ci_by_group = [], {}
     for (split, stratum), g in df.groupby(["evaluation_split", "stratum"]):
-        s = summary(g)
-        ci = bootstrap(g, args.n_boot, rng)
+        s, ci = group_metrics(g, args.n_boot, rng)
         ci_by_group[(split, stratum)] = ci
-        lo, hi = wilson(s["TP"], s["n_positive"])
-        s.update(split=split, stratum=stratum, recall_wilson_lo=lo, recall_wilson_hi=hi)
-        for k, (a, b) in ci.items():
-            s[f"{k}_ci_lo"], s[f"{k}_ci_hi"] = a, b
-        fa_lo, fa_hi = wilson(s["FP"], s["FP"] + s["TN"])
-        pr_lo, pr_hi = wilson(s["TP"], s["TP"] + s["FP"])
-        s.update(false_alarm_wilson_lo=fa_lo, false_alarm_wilson_hi=fa_hi,
-                 precision_wilson_lo=pr_lo, precision_wilson_hi=pr_hi)
+        s.update(split=split, stratum=stratum)
         agg_rows.append(s)
     agg = pd.DataFrame(agg_rows)
     first = ["split", "stratum"]
@@ -496,10 +592,7 @@ def main():
 
     # ---- paired comparison with notebook predictions
     paired_lines = []
-    if args.notebook_predictions:
-        p = Path(args.notebook_predictions)
-        nb = pd.read_json(p, lines=True) if p.suffix == ".jsonl" else pd.read_csv(p)
-        nb = nb.drop_duplicates("clip_id").set_index("clip_id")
+    if nb is not None:
         main_pos = scope[scope.expected_suspicious & scope.clip_id.isin(nb.index)]
         arms = {}
         if "predicted_suspicious" in nb:
@@ -529,7 +622,7 @@ def main():
         if sweep:
             pd.concat([c.assign(split=k[0], stratum=k[1]) for k, c in sweep.items()], ignore_index=True) \
                 .to_csv(out / "threshold_curve.csv", index=False)
-        sweep_lines = threshold_section(df, sweep, agg, run, args, rng)
+        sweep_lines = threshold_section(df, sweep, agg, run, args, rng, nb)
         curves, pts = {}, {}
         for split in ("calibration", "test"):
             c = sweep.get((split, "main"))
@@ -539,7 +632,14 @@ def main():
         if len(t_main) and not missing(t_main.iloc[0].false_alarm_rate_valid):
             r0 = t_main.iloc[0]
             pts["Aplikasi (flag saat run)"] = (r0.false_alarm_rate_valid, r0.positive_recall_all)
-        pts["Notebook, threshold 0.0049"] = NOTEBOOK_OPERATING_POINT
+        tg_plot = df[df.stratum.eq("main")]
+        if df.evaluation_split.eq("test").any():
+            tg_plot = tg_plot[tg_plot.evaluation_split.eq("test")]
+        nb_thr = notebook_reference("main", tg_plot, nb, args.notebook_arm, args.notebook_threshold).thr
+        if nb_thr:
+            m = from_counts(nb_thr)
+            if not missing(m["false_alarm_rate"]):
+                pts[f"Notebook, threshold {args.notebook_threshold:.4f}"] = (m["false_alarm_rate"], m["recall"])
         if curves and plot_curves(curves, pts, out / "threshold_curve.png"):
             plot_note = "Grafik: `threshold_curve.png`. "
 
@@ -570,9 +670,16 @@ def main():
     L.append("")
 
     L.append("## Hasil utama (held-out test)\n")
-    L.append("Angka notebook dikutip dari output `evaluation.ipynb` (sel 16, 18, 20). Dua acuan dipakai karena "
-             "angka 0,914 di slide berasal dari threshold 0,0049 pada skor notebook; baris 'flag yes/no' adalah acuan "
-             "yang memakai flag yang dibangkitkan model.\n")
+    if nb is not None:
+        L.append(f"Baris notebook dihitung ulang dari prediksi per-video (`--notebook-predictions`, arm {args.notebook_arm}) "
+                 "hanya pada klip yang juga dijalankan aplikasi, dengan definisi metrik notebook. Angka bawaan skrip "
+                 "(set penuh 91 klip) tidak dipakai.\n")
+    else:
+        L.append("Angka notebook bawaan dikutip dari output `evaluation.ipynb` (sel 16, 18, 20) dan dihitung pada set "
+                 "penuh test (main: 91 klip, person_optional: 21 klip). Angka itu hanya ditampilkan bila run ini "
+                 "berukuran sama; untuk subset, berikan `--notebook-predictions` agar dihitung pada klip yang sama. "
+                 "Dua acuan dipakai karena angka 0,914 di slide berasal dari threshold 0,0049 pada skor notebook; baris "
+                 "'flag yes/no' adalah acuan yang memakai flag yang dibangkitkan model.\n")
     if scored_any:
         ths = sorted({round(float(x), 6) for x in df.suspicious_threshold.dropna()}) if "suspicious_threshold" in df else []
         L.append("Baris **Aplikasi** memakai flag yang diputuskan aplikasi saat run"
@@ -587,13 +694,21 @@ def main():
             continue
         r = a.iloc[0]
         ci = ci_by_group[("test", stratum)]
+        gt = df[(df.evaluation_split == "test") & (df.stratum == stratum)]
+        nbref = notebook_reference(stratum, gt, nb, args.notebook_arm, args.notebook_threshold)
+        app_label = "**Aplikasi** (flag model)"
+        if len(nbref.sub) < len(gt) and nbref.source == "per-video":
+            # compare on the clips both pipelines ran, not on the app's larger set
+            sm, ci = group_metrics(nbref.sub, args.n_boot, rng)
+            r = pd.Series(sm)
+            app_label = f"**Aplikasi** (flag model, {len(nbref.sub)} klip yang sama)"
         L.append(f"### test / {stratum} (n={int(r.n_total)}, positif={int(r.n_positive)}, Normal={int(r.n_negative)})\n")
         rows = []
-        for name, ref in NOTEBOOK_REFERENCE.get(stratum, {}).items():
+        for name, ref in nbref.rows:
             m = from_counts(ref)
             rows.append((name, f"{m['recall']:.3f}", num(m["precision"]), num(m["F1"]), num(m["false_alarm_rate"]),
                          f"{m['review_rate']:.3f}", f"{m['TP']}/{m['FN']}/{m['FP']}/{m['TN']}"))
-        rows.append(("**Aplikasi** (flag model)", with_ci(r.positive_recall_all, ci.get("positive_recall_all")),
+        rows.append((app_label, with_ci(r.positive_recall_all, ci.get("positive_recall_all")),
                      with_ci(r.precision_valid, (r.precision_wilson_lo, r.precision_wilson_hi)),
                      with_ci(r.F1_valid, ci.get("F1_valid")),
                      with_ci(r.false_alarm_rate_valid, (r.false_alarm_wilson_lo, r.false_alarm_wilson_hi)),
@@ -604,14 +719,21 @@ def main():
         L.append("\nBaris aplikasi menampilkan CI 95%: recall, F1 dan review rate dengan bootstrap "
                  f"({args.n_boot} resampel, positif dan Normal diambil terpisah); precision dan false alarm dengan "
                  "interval Wilson, karena bootstrap memberi interval selebar nol saat jumlah kejadiannya nol.")
+        if nbref.note:
+            L.append(f"\n**Catatan pembanding:** {nbref.note}")
         L.append(f"\nCoverage aplikasi: {pct(r.coverage)} ({int(r.n_valid)}/{int(r.n_total)} valid; "
                  f"{int(r.invalid_positive)} positif dan {int(r.invalid_negative)} Normal tidak valid). "
                  f"Recall dihitung atas semua positif, jadi output tidak valid dihitung sebagai terlewat.\n")
         rec = r.positive_recall_all
         if stratum == "main":
-            fixed = from_counts(NOTEBOOK_REFERENCE["main"]["Notebook, flag yes/no (gated_8)"])["recall"]
-            L.append(f"- Recall aplikasi {num(rec)}: {verdict(rec, ci.get('positive_recall_all'), fixed, 'notebook flag yes/no')}.")
-            L.append(f"- Terhadap angka di slide: {verdict(rec, ci.get('positive_recall_all'), SLIDE_RECALL, 'angka di slide')}.")
+            if nbref.flag:
+                L.append(f"- Recall aplikasi {num(rec)}: "
+                         f"{verdict(rec, ci.get('positive_recall_all'), from_counts(nbref.flag)['recall'], 'notebook flag yes/no')}.")
+            if nbref.thr:
+                name = ("angka di slide" if nbref.source == "bawaan"
+                        else f"notebook threshold {args.notebook_threshold:.4f} (klip yang sama)")
+                L.append(f"- Terhadap {name}: "
+                         f"{verdict(rec, ci.get('positive_recall_all'), from_counts(nbref.thr)['recall'], name)}.")
             L.append(f"- Target operasional notebook adalah recall 0,90: "
                      f"{'tercapai' if rec >= 0.90 else 'belum tercapai'} pada titik estimasi.\n")
     L += sweep_lines

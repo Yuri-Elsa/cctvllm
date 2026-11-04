@@ -80,6 +80,20 @@ def load(results_path, manifest_path, allow_incomplete):
         if col not in df:
             df[col] = False
         df[col] = df[col].fillna(False).astype(bool)
+
+    # p(yes) recorded by the app (run_app_eval.py stores it from the screening log). Runs made before that
+    # was added have no such column: everything below that needs scores is then skipped, not guessed.
+    raw_score = (pd.to_numeric(df["suspicious_score"], errors="coerce") if "suspicious_score" in df
+                 else pd.Series(np.nan, index=df.index))
+    df["score"] = raw_score
+    # score_eff is the value a threshold sweep compares against, defined only for valid outputs:
+    #   nobody detected -> 0.0 (the model never ran, so no threshold can flag it, as in the app);
+    #   score recorded  -> the score;
+    #   valid but no score (model server gave no log-probabilities) -> 1.0 for "yes", 0.0 for "no"
+    #   (the same fallback as Scoring.Effective in the app).
+    fallback = df.parsed_flag.fillna(False).astype(bool).astype(float)
+    df["score_eff"] = np.where(~df.valid, np.nan, np.where(df.no_people, 0.0, raw_score.fillna(fallback)))
+    df["scored"] = df.valid & ~df.no_people & raw_score.notna()
     return df, manifest
 
 
@@ -169,6 +183,109 @@ def paired_recall_delta(a, b, n_boot, rng):
     return float(b.mean() - a.mean()), float(np.percentile(deltas, 2.5)), float(np.percentile(deltas, 97.5))
 
 
+# ---------------------------------------------------------------- threshold sweep
+
+MIN_POSITIVES, MIN_NEGATIVES = 10, 30      # same warning limits as the app's Calibration page
+SATURATED_HI, SATURATED_LO = 0.9999, 1e-4  # scores this close to 1 or 0 are fragile (quantisation, model update)
+NOTEBOOK_OPERATING_POINT = (0.143, 0.914)  # (false alarm, recall) of the notebook at its tuned threshold
+
+
+def curve(g):
+    """Every distinct threshold of the valid outputs in g, with the confusion counts a flag at `score >= t`
+    would give. Invalid outputs count as missed events (recall over all positives) and are never false alarms,
+    like the headline table."""
+    y = g.expected_suspicious.to_numpy(bool)
+    valid = g.valid.to_numpy(bool)
+    s = g.score_eff.to_numpy(float)
+    if not valid.any():
+        return pd.DataFrame()
+    cand = np.unique(s[valid])
+    ts = np.unique(np.concatenate([[0.0], cand, [np.nextafter(cand.max(), np.inf)]]))
+    n_pos = int(y.sum())
+    rows = []
+    for t in ts:
+        f = valid & (s >= t)
+        tp, fp = int((f & y).sum()), int((f & ~y).sum())
+        fn, tn = int((valid & y & ~f).sum()), int((valid & ~y & ~f).sum())
+        rows.append(dict(threshold=float(t), TP=tp, FN_valid=fn, FP=fp, TN=tn,
+                         recall_all=ratio(tp, n_pos), precision=ratio(tp, tp + fp),
+                         false_alarm_rate=ratio(fp, fp + tn), F1=ratio(2 * tp, 2 * tp + fp + fn),
+                         review_rate=float(((~valid) | f).mean())))
+    return pd.DataFrame(rows)
+
+
+def _auc(y, s):
+    """Area under the ROC curve (Mann-Whitney, ties count half). None when one class is missing."""
+    n1, n0 = int(y.sum()), int((~y).sum())
+    if not n1 or not n0:
+        return None
+    r = pd.Series(s).rank().to_numpy()
+    return float((r[y].sum() - n1 * (n1 + 1) / 2) / (n1 * n0))
+
+
+def auc_with_ci(g, n_boot, rng):
+    v = g[g.valid]
+    y, s = v.expected_suspicious.to_numpy(bool), v.score_eff.to_numpy(float)
+    point = _auc(y, s)
+    if point is None:
+        return None, (None, None)
+    pos, neg = np.flatnonzero(y), np.flatnonzero(~y)
+    draws = []
+    for _ in range(n_boot):
+        idx = np.concatenate([rng.choice(pos, len(pos)), rng.choice(neg, len(neg))])
+        draws.append(_auc(y[idx], s[idx]))
+    return point, (float(np.percentile(draws, 2.5)), float(np.percentile(draws, 97.5)))
+
+
+def pick_threshold(c, target_recall):
+    """Highest threshold that still reaches the target recall (fewest false alarms for that recall).
+    None when no threshold reaches it, for example because invalid outputs already cap the recall."""
+    ok = c[c.recall_all >= target_recall]
+    return None if ok.empty else float(ok.threshold.max())
+
+
+def at_threshold(g, t, n_boot, rng):
+    """Summary and bootstrap CIs for g when flagging `score >= t`, using the same code as the headline table."""
+    g2 = g.copy()
+    g2["parsed_flag"] = (g2.score_eff >= t).where(g2.valid)
+    return summary(g2), bootstrap(g2, n_boot, rng)
+
+
+def op_row(label, t, s, ci):
+    fa = wilson(s["FP"], s["FP"] + s["TN"])
+    return (label, "n/a" if t is None else f"{t:.6g}",
+            with_ci(s["positive_recall_all"], ci.get("positive_recall_all")), with_ci(s["false_alarm_rate_valid"], fa),
+            num(s["precision_valid"]), f"{s['review_rate_all']:.3f}",
+            f"{s['TP']}/{s['FN_valid']}/{s['FP']}/{s['TN']}")
+
+
+def fragile(t):
+    return t is not None and (t >= SATURATED_HI or (0 < t <= SATURATED_LO))
+
+
+def plot_curves(curves, app_points, path):
+    """Recall against false-alarm rate. Optional: skipped when matplotlib is not installed."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return False
+    fig, ax = plt.subplots(figsize=(5.5, 5))
+    for label, c in curves.items():
+        ax.step(c.false_alarm_rate, c.recall_all, where="post", label=label)
+    for label, (x, y) in app_points.items():
+        ax.scatter([x], [y], zorder=3, label=label)
+    ax.plot([0, 1], [0, 1], color="grey", lw=0.8, ls=":")
+    ax.set(xlabel="False alarm (Normal yang ditandai)", ylabel="Recall (semua positif)", xlim=(0, 1), ylim=(0, 1),
+           title="Recall vs false alarm per threshold p(yes)")
+    ax.legend(fontsize=7, loc="lower right")
+    fig.tight_layout()
+    fig.savefig(path, dpi=130)
+    plt.close(fig)
+    return True
+
+
 # ---------------------------------------------------------------- formatting
 
 def missing(x):
@@ -210,6 +327,86 @@ def md_table(headers, rows):
 
 # ---------------------------------------------------------------- main
 
+def threshold_section(df, sweep, agg, run, args, rng):
+    """Markdown lines for the threshold sweep on test/main. Threshold selection follows the person-detection
+    protocol: choose on the calibration split, freeze, then score on test. Without a calibration split in the
+    run only an optimistic (chosen-on-test) point can be shown, and it is labelled as such."""
+    has_test = df.evaluation_split.eq("test").any()
+    tg = df[df.evaluation_split.eq("test") & df.stratum.eq("main")] if has_test else df[df.stratum.eq("main")]
+    if tg.empty or (has_test and ("test", "main") not in sweep):
+        return []
+    L = ["## Kurva threshold (skor p(yes))\n"]
+    n_valid = int(tg.valid.sum())
+    n_scored = int(tg.scored.sum())
+    n_nop = int((tg.valid & tg.no_people).sum())
+    n_fallback = int((tg.valid & ~tg.no_people & ~tg.scored).sum())
+    L.append(f"- Skor p(yes) tersedia untuk {n_scored} dari {n_valid} video valid (test/main); {n_nop} video tanpa orang "
+             "dihitung 0 karena model tidak dipanggil"
+             + (f"; {n_fallback} video valid tanpa skor memakai yes=1 / no=0, sehingga kurva kasar di bagian itu" if n_fallback else "")
+             + ".")
+    if "model" in df and df.model.dropna().nunique() > 1:
+        L.append("- **Peringatan:** skor berasal dari lebih dari satu model; skor model berbeda tidak sebanding.")
+    auc, ci_auc = auc_with_ci(tg, args.n_boot, rng)
+    if auc is not None:
+        L.append(f"- AUC (video valid): {with_ci(auc, ci_auc)}. Nilai 0,5 berarti skor tidak lebih baik dari menebak.")
+    L.append("")
+
+    headers = ["Titik operasi", "Threshold", "Recall (semua positif)", "False alarm (Normal)", "Precision",
+               "Review rate", "TP/FN/FP/TN"]
+    rows = []
+    s_app, ci_app = summary(tg), bootstrap(tg, args.n_boot, rng)
+    ths = sorted({round(float(x), 6) for x in tg.suspicious_threshold.dropna()}) if "suspicious_threshold" in tg else []
+    rows.append(op_row("Aplikasi (flag saat run)", ths[0] if len(ths) == 1 else None, s_app, ci_app))
+    nb = from_counts(NOTEBOOK_REFERENCE["main"]["Notebook, threshold 0.0049 (slide: 0.914)"])
+    rows.append(("Notebook, threshold 0.0049 (skala skor berbeda)", "0.0049", f"{nb['recall']:.3f}",
+                 num(nb["false_alarm_rate"]), num(nb["precision"]), f"{nb['review_rate']:.3f}",
+                 f"{nb['TP']}/{nb['FN']}/{nb['FP']}/{nb['TN']}"))
+
+    notes = []
+    target = args.target_recall
+    cal = df[df.evaluation_split.eq("calibration") & df.stratum.eq("main")]
+    c_test = sweep.get(("test", "main"))
+    if has_test and len(cal) and ("calibration", "main") in sweep:
+        n_pos_c, n_neg_c = int(cal.expected_suspicious.sum()), int((~cal.expected_suspicious).sum())
+        if n_pos_c < MIN_POSITIVES or n_neg_c < MIN_NEGATIVES:
+            notes.append(f"Split calibration kecil ({n_pos_c} positif, {n_neg_c} Normal; batas yang disarankan "
+                         f"{MIN_POSITIVES} dan {MIN_NEGATIVES}). Threshold yang dipilih darinya tidak stabil.")
+        t = pick_threshold(sweep[("calibration", "main")], target)
+        if t is None:
+            notes.append(f"Tidak ada threshold di calibration yang mencapai recall {target:.0%} "
+                         "(output tidak valid ikut dihitung sebagai terlewat).")
+        else:
+            s_t, ci_t = at_threshold(tg, t, args.n_boot, rng)
+            rows.append(op_row(f"Dipilih di calibration (recall ≥ {target:.0%}), dibekukan", t, s_t, ci_t))
+            rec = s_t["positive_recall_all"]
+            notes.append("Recall di titik terbekukan: "
+                         + (verdict(rec, ci_t.get("positive_recall_all"), SLIDE_RECALL, "angka di slide") or "n/a")
+                         + f"; target {target:.0%} " + ("tercapai" if rec >= target else "tidak tercapai") + " di test.")
+            if fragile(t):
+                notes.append(f"Threshold {t:.6g} ada di ekor jenuh (dekat 0 atau 1). Nilai sedekat itu rapuh terhadap "
+                             "perubahan model, kuantisasi atau perangkat; periksa kurva dan titik yang lebih longgar sebelum dipakai.")
+    elif c_test is not None:
+        t = pick_threshold(c_test, target)
+        if t is not None:
+            s_t, ci_t = at_threshold(tg, t, args.n_boot, rng)
+            rows.append(op_row(f"OPTIMISTIS: dipilih di test sendiri (recall ≥ {target:.0%})", t, s_t, ci_t))
+        notes.append("Run ini tidak memuat split calibration, jadi threshold tidak bisa dipilih secara jujur. Baris "
+                     "'OPTIMISTIS' dipilih dan dinilai pada data yang sama dan melebihkan kinerja. Jalankan "
+                     "`run_app_eval.py --split calibration,test` agar threshold dipilih di calibration lalu dibekukan.")
+    for t in args.threshold:
+        s_t, ci_t = at_threshold(tg, t, args.n_boot, rng)
+        rows.append(op_row("Ditetapkan (--threshold)", t, s_t, ci_t))
+    L.append(md_table(headers, rows))
+    L.append("")
+    L.append("Recall dihitung atas semua positif; CI 95% bootstrap untuk recall, Wilson untuk false alarm. "
+             "Skor p(yes) dari model 4B cenderung jenuh (mendekati 0 atau 1), jadi banyak video bisa berbagi skor yang sama "
+             "dan recall naik dalam lompatan besar.\n")
+    L += [f"- {n}" for n in notes]
+    if notes:
+        L.append("")
+    return L
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--results", required=True)
@@ -223,6 +420,10 @@ def main():
                     help="notebook runs/baseline_v2/gated_8/predictions.jsonl (or .csv) for a paired per-video comparison")
     ap.add_argument("--notebook-threshold", type=float, default=0.004905405919998884,
                     help="threshold applied to the notebook's p_yes_binary for the 'tuned' arm")
+    ap.add_argument("--target-recall", type=float, default=0.90,
+                    help="recall to reach when choosing a threshold on the calibration split (default 0.90, the notebook's)")
+    ap.add_argument("--threshold", type=float, action="append", default=[],
+                    help="a p(yes) threshold to report on test, frozen in advance (repeatable)")
     args = ap.parse_args()
 
     out = Path(args.out)
@@ -264,7 +465,8 @@ def main():
     pd.DataFrame(cls_rows).to_csv(out / "per_class.csv", index=False)
 
     cols = [c for c in ["clip_id", "class_name", "evaluation_split", "stratum", "expected_suspicious", "status",
-                        "invalid_reason", "suspicious", "weapon", "no_people", "n_frames", "app_elapsed_seconds",
+                        "invalid_reason", "suspicious", "suspicious_score", "suspicious_threshold",
+                        "score_source", "weapon", "no_people", "person_detector", "n_frames", "app_elapsed_seconds",
                         "wall_seconds", "app_duration_sec", "manifest_span_sec", "span_mismatch", "model",
                         "error", "description"] if c in df.columns]
     df[cols].to_csv(out / "per_video.csv", index=False)
@@ -316,6 +518,31 @@ def main():
                     f"- Aplikasi dikurangi {name}: selisih recall {r[0]:+.3f} (CI 95% {r[1]:+.3f} sampai {r[2]:+.3f}) pada "
                     f"{len(main_pos)} video positif; terdeteksi keduanya {both}, hanya notebook {only_nb}, hanya aplikasi {only_app}.")
 
+    # ---- threshold sweep over the recorded p(yes)
+    scored_any = bool(df.scored.any())
+    sweep, sweep_lines, plot_note = {}, [], ""
+    if scored_any:
+        for (split, stratum), g in df.groupby(["evaluation_split", "stratum"]):
+            c = curve(g)
+            if len(c):
+                sweep[(split, stratum)] = c
+        if sweep:
+            pd.concat([c.assign(split=k[0], stratum=k[1]) for k, c in sweep.items()], ignore_index=True) \
+                .to_csv(out / "threshold_curve.csv", index=False)
+        sweep_lines = threshold_section(df, sweep, agg, run, args, rng)
+        curves, pts = {}, {}
+        for split in ("calibration", "test"):
+            c = sweep.get((split, "main"))
+            if c is not None and c.false_alarm_rate.notna().any():
+                curves[f"{split}/main"] = c
+        t_main = agg[(agg.split == "test") & (agg.stratum == "main")]
+        if len(t_main) and not missing(t_main.iloc[0].false_alarm_rate_valid):
+            r0 = t_main.iloc[0]
+            pts["Aplikasi (flag saat run)"] = (r0.false_alarm_rate_valid, r0.positive_recall_all)
+        pts["Notebook, threshold 0.0049"] = NOTEBOOK_OPERATING_POINT
+        if curves and plot_curves(curves, pts, out / "threshold_curve.png"):
+            plot_note = "Grafik: `threshold_curve.png`. "
+
     # ---- latency
     lat = scope[scope.valid]
     latency = {}
@@ -344,9 +571,16 @@ def main():
 
     L.append("## Hasil utama (held-out test)\n")
     L.append("Angka notebook dikutip dari output `evaluation.ipynb` (sel 16, 18, 20). Dua acuan dipakai karena "
-             "aplikasi memakai flag `suspicious` yang dibangkitkan model, **bukan** threshold 0,0049 pada skor "
-             "logit. Angka 0,914 di slide berasal dari threshold itu; acuan yang sebanding dengan aplikasi adalah "
-             "baris 'flag yes/no'.\n")
+             "angka 0,914 di slide berasal dari threshold 0,0049 pada skor notebook; baris 'flag yes/no' adalah acuan "
+             "yang memakai flag yang dibangkitkan model.\n")
+    if scored_any:
+        ths = sorted({round(float(x), 6) for x in df.suspicious_threshold.dropna()}) if "suspicious_threshold" in df else []
+        L.append("Baris **Aplikasi** memakai flag yang diputuskan aplikasi saat run"
+                 + (f" (threshold p(yes) = {', '.join(str(x) for x in ths)})" if ths else "")
+                 + ". Bagian 'Kurva threshold' di bawah menyapu semua threshold dari skor yang direkam.\n")
+    else:
+        L.append("Run ini tidak menyimpan skor p(yes) (`suspicious_score`), jadi hanya threshold yang dipakai aplikasi "
+                 "saat run yang bisa dinilai. Jalankan ulang dengan `run_app_eval.py` versi terbaru untuk kurva threshold.\n")
     for stratum in ("main", "person_optional"):
         a = agg[(agg.split == "test") & (agg.stratum == stratum)]
         if a.empty:
@@ -380,6 +614,9 @@ def main():
             L.append(f"- Terhadap angka di slide: {verdict(rec, ci.get('positive_recall_all'), SLIDE_RECALL, 'angka di slide')}.")
             L.append(f"- Target operasional notebook adalah recall 0,90: "
                      f"{'tercapai' if rec >= 0.90 else 'belum tercapai'} pada titik estimasi.\n")
+    L += sweep_lines
+    if plot_note and sweep_lines:
+        L.append(plot_note + "File `threshold_curve.csv` berisi seluruh tabel per threshold.\n")
     other = agg[agg.split != "test"]
     if len(other):
         L.append("### Split lain yang ikut dijalankan\n")
@@ -436,7 +673,10 @@ def main():
         f"- Benchmark kecil: {size}. Interval kepercayaan lebar; baca CI, bukan hanya titik estimasi.",
         "- Dataset UCF-Crime/UCA, bukan rekaman CCTV kantor. Hasil ini tidak menjawab kinerja di lapangan.",
         "- Perbedaan pipeline selain model: jumlah frame (sampai 150 vs 8), gating orang tanpa fallback, prompt, parsing JSON, dekode FFmpeg vs OpenCV.",
-        "- Aplikasi tidak punya threshold yang dapat dikalibrasi. Memakai skor logit seperti di notebook membutuhkan perubahan kode.",
+        ("- Nilai threshold notebook (0,0049) tidak bisa dipindahkan ke aplikasi: skala skor bergantung pada model, prompt dan "
+         "jumlah frame. Bandingkan titik operasi (recall pada false alarm tertentu), bukan angka threshold."
+         if scored_any else
+         "- Run ini tidak merekam skor p(yes), jadi threshold tidak bisa dikalibrasi dari hasilnya."),
         "- Label benchmark mengikuti kelas anomali UCF (bukan penilaian kecurigaan oleh petugas).",
         "- Satu kali jalan dengan decoding greedy; variasi antar-jalan tidak diukur.",
     ]

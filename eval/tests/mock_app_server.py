@@ -19,6 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote
 
 P_POS, P_NEG = 0.7, 0.1
+SUSPICIOUS_THRESHOLD = 0.5
 SETTINGS = {"mode": "local", "endpoint": "http://127.0.0.1:11434/v1", "model": "mock", "personLabels": True,
             "flagActivity": "", "siteContextEnabled": False, "siteContext": "", "weaponEnabled": True,
             "batchProcessing": False}
@@ -34,12 +35,19 @@ def decide(name):
         return {"status": "failed", "stage": "Failed", "error": "Model returned malformed JSON."}
     if "noperson" in lower:
         return {"status": "completed", "stage": "Completed", "suspicious": "no", "weapon": "no", "noPeople": True,
-                "description": "Person detection only", "timestamps": []}
+                "description": "Person detection only", "timestamps": [],
+                "screening": {"personDetector": "yolo", "personSampled": 12, "personKept": 0, "scoreSource": "none"}}
     p = P_NEG if "normal" in lower else P_POS
     yes = unit(name, "flag") < p
+    # p(yes) consistent with the flag at the app's threshold (SUSPICIOUS_THRESHOLD): yes >= threshold > no.
+    u = unit(name, "score")
+    score = SUSPICIOUS_THRESHOLD + (1 - SUSPICIOUS_THRESHOLD) * 0.98 * u if yes else SUSPICIOUS_THRESHOLD * 0.98 * u
     return {"status": "completed", "stage": "Completed", "suspicious": "yes" if yes else "no", "weapon": "no",
             "noPeople": False, "description": f"mock description for {name}", "timestamps": [float(i) for i in range(12)],
-            "rawText": "{}", "model": "mock", "backendMode": "local", "personLabels": True}
+            "rawText": "{}", "model": "mock", "backendMode": "local", "personLabels": True,
+            "screening": {"personDetector": "yolo", "personSampled": 12, "personKept": 12,
+                          "suspiciousScore": round(score, 6), "suspiciousThreshold": SUSPICIOUS_THRESHOLD,
+                          "suspiciousModelAnswer": "yes" if yes else "no", "scoreSource": "logprobs"}}
 
 
 class State:

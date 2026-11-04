@@ -116,6 +116,55 @@ def main():
         check("0.629" in report and "0.914" in report, "report cites both notebook reference points")
         check("upload_rejected" in report and "failed" in report, "report lists invalid reasons")
 
+        # ---- threshold sweep over the recorded p(yes)
+        scored = [r for r in rows if r.get("suspicious_score") is not None]
+        check(len(scored) > 0 and all(r["score_source"] == "logprobs" for r in scored), "suspicious_score recorded from the screening log")
+        check(by["fighting_noperson_x264"].get("suspicious_score") is None, "no score for a video the model never saw")
+        check(by["arrest_broken_x264"].get("suspicious_score") is None, "no score for a failed job")
+        check(all(r["suspicious_threshold"] == 0.5 for r in scored), "app threshold recorded next to each score")
+        rep_dir = out / "report"
+        check((rep_dir / "threshold_curve.csv").exists(), "threshold_curve.csv written")
+        cv = pd.read_csv(rep_dir / "threshold_curve.csv")
+        ct = cv[(cv.split == "test") & (cv.stratum == "main")].sort_values("threshold")
+        check(ct.recall_all.is_monotonic_decreasing and ct.false_alarm_rate.is_monotonic_decreasing,
+              "recall and false-alarm rate never rise as the threshold rises")
+        check(ct.iloc[0].recall_all >= ct.iloc[-1].recall_all and ct.iloc[-1].TP == 0 and ct.iloc[-1].FP == 0,
+              "highest threshold flags nothing")
+        # Flagging at the lowest score among 'yes' videos must reproduce the app's own flags exactly.
+        yes_scores = [r["suspicious_score"] for r in main_rows if yes(r) and r.get("suspicious_score") is not None]
+        at_app = ct[(ct.threshold - min(yes_scores)).abs() < 1e-12].iloc[0]
+        check(int(at_app.TP) == tp and int(at_app.FP) == fp, f"sweep at the app's own cut reproduces TP/FP ({tp}/{fp})")
+        check("Kurva threshold" in report and "OPTIMISTIS" in report and "AUC" in report,
+              "report has the sweep, AUC and flags the test-chosen point as optimistic")
+        check("Run ini tidak menyimpan skor" not in report, "no 'scores missing' notice when scores exist")
+
+        # frozen threshold selected on the calibration split
+        out2 = tmp / "run_cal"
+        common2 = [a if a != str(out) else str(out2) for a in common]
+        code, log = run([str(EVAL / "run_app_eval.py"), *common2, "--settings", str(settings), "--split", "calibration,test"])
+        check(code == 0, f"calibration+test run exits 0 ({log[-200:] if code else 'ok'})")
+        code, log = run([str(EVAL / "analyze_app_eval.py"), "--results", str(out2 / "results.jsonl"), "--manifest",
+                         str(manifest), "--out", str(out2 / "report"), "--n-boot", "300", "--threshold", "0.6"])
+        check(code == 0, f"analysis with calibration exits 0 ({log[-300:] if code else 'ok'})")
+        rep2 = (out2 / "report" / "report.md").read_text(encoding="utf-8")
+        check("Dipilih di calibration" in rep2 and "OPTIMISTIS" not in rep2, "threshold chosen on calibration, then frozen")
+        check("Ditetapkan (--threshold)" in rep2, "explicit --threshold reported")
+        check("Split calibration kecil" in rep2, "small calibration split is warned about")
+        cv2 = pd.read_csv(out2 / "report" / "threshold_curve.csv")
+        check(set(cv2.split) == {"calibration", "test"}, "curve written for both splits")
+
+        # a run without recorded scores (older results) still analyses, and says so
+        old_rows = tmp / "old_results.jsonl"
+        with old_rows.open("w", encoding="utf-8") as f:
+            for r in rows:
+                f.write(json.dumps({k: v for k, v in r.items() if not k.startswith(("suspicious_", "score_", "person_"))}) + "\n")
+        code, log = run([str(EVAL / "analyze_app_eval.py"), "--results", str(old_rows), "--manifest", str(manifest),
+                         "--out", str(tmp / "old_report"), "--n-boot", "300", "--run-json", str(out / "run.json")])
+        old_rep = (tmp / "old_report" / "report.md").read_text(encoding="utf-8") if code == 0 else ""
+        check(code == 0 and "Run ini tidak menyimpan skor" in old_rep and "Kurva threshold" not in old_rep
+              and not (tmp / "old_report" / "threshold_curve.csv").exists(),
+              "results without scores analyse as before, with a notice and no curve")
+
         # paired comparison against synthetic notebook predictions
         nbp = tmp / "nb.jsonl"
         with nbp.open("w", encoding="utf-8") as f:

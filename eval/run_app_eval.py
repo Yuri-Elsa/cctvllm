@@ -269,6 +269,20 @@ def evaluate_one(base, row, path, args, settings_hash):
             n_frames=len(job.get("timestamps") or []), app_elapsed_seconds=job.get("elapsed"),
             app_duration_sec=job.get("duration"), fps=job.get("fps"),
         )
+        # Screening log: the probability of "yes" behind the flag. Without it a run can only be scored at the
+        # single threshold the app happened to use; with it analyze_app_eval.py can sweep every threshold.
+        # Absent (None) for runs against an older server or when the model server returns no log-probabilities.
+        scr = job.get("screening") or {}
+        rec.update(
+            suspicious_score=scr.get("suspiciousScore"),
+            suspicious_threshold=scr.get("suspiciousThreshold"),
+            suspicious_model_answer=scr.get("suspiciousModelAnswer"),
+            score_source=scr.get("scoreSource"),
+            person_detector=scr.get("personDetector"),
+            person_max_score=scr.get("personMaxScore"),
+            person_sampled=scr.get("personSampled"),
+            person_kept=scr.get("personKept"),
+        )
     elif job is not None:
         rec.update(app_duration_sec=job.get("duration"), fps=job.get("fps"))
     rec["wall_seconds"] = round(time.perf_counter() - started, 2)

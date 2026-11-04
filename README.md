@@ -450,6 +450,7 @@ python eval/analyze_app_eval.py --results eval/runs/app_v1/results.jsonl \
     --manifest eval/manifest.csv --out eval/runs/app_v1/report
 ```
 
+- Each result also records the probability of `yes` behind the flag (`suspicious_score`, the threshold the app used and where the score came from), so one run can be scored at every threshold. The analysis then adds a **threshold curve** (`threshold_curve.csv`, `threshold_curve.png`), the AUC, and a threshold chosen on the `calibration` split (`--target-recall`, default 0.90) and frozen before it is scored on `test`. Run with `--split calibration,test` for that; with `test` alone the report only shows a point chosen on the same data and labels it optimistic. `--threshold X` (repeatable) reports a threshold you fixed in advance. Results recorded before this change have no scores and are analysed as before, without the curve.
 - Results are appended after every video, so an interrupted run resumes where it stopped.
 - `--limit N` is a quick smoke test; `--split`, `--strata`, `--redo-failed` and `--timeout` control what runs.
 - `eval/make_subset.py` picks a small balanced subset for quick comparisons of a second configuration.

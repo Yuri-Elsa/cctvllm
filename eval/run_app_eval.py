@@ -259,6 +259,14 @@ def evaluate_one(base, row, path, args, settings_hash):
 
     if job is not None and "status" not in rec:
         raw = job.get("rawText")
+        # p(yes) scores let analysis re-threshold a finished run without running the model again.
+        screening = job.get("screening") or {}
+        rec.update(
+            suspicious_score=screening.get("suspiciousScore"), suspicious_threshold=screening.get("suspiciousThreshold"),
+            score_source=screening.get("scoreSource"), model_suspicious=screening.get("suspiciousModelAnswer"),
+            narrative_score=screening.get("narrativeScore"), classifier_score=screening.get("classifierScore"),
+            person_max_score=screening.get("personMaxScore"), scene_mode=bool(screening.get("sceneMode")),
+        )
         rec.update(
             status=job["status"], stage=job.get("stage"),
             suspicious=job.get("suspicious"), weapon=job.get("weapon"),

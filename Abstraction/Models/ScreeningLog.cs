@@ -20,15 +20,18 @@ public sealed record ScreeningLog
     public double? PersonMaxScore { get; init; }
     public int PersonSampled { get; init; }
     public int PersonKept { get; init; }
-    public int PersonLlmChecked { get; init; }    
-    public int PersonLlmRejected { get; init; }    
+    public int PersonLlmChecked { get; init; }
+    public int PersonLlmRejected { get; init; }
     public PersonSample[] PersonSamples { get; init; } = [];
+    public bool SceneMode { get; init; }
 
     public double? SuspiciousScore { get; init; }
     public double? SuspiciousThreshold { get; init; }
     public string? SuspiciousModelAnswer { get; init; }
     public string? SuspiciousDecision { get; init; }
     public string ScoreSource { get; init; } = "none";
+    public double? NarrativeScore { get; init; }
+    public double? ClassifierScore { get; init; }
 
     public AgentLog? Agent { get; init; }
 }

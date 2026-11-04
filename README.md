@@ -149,6 +149,8 @@ Open **http://127.0.0.1:8766**.
 | Person threshold      | Minimum detection confidence, 0–1 (default 0.25). In Hybrid, YOLO frames at or above it skip the LLM; try 0.5 |
 | Hybrid: check below   | YOLO floor, 0–1 (default 0.10). Frames whose best box is under it are dropped; frames between it and the person threshold go to the LLM |
 | Hybrid: LLM threshold | Keep a doubtful frame when the LLM's `yes` probability reaches this, 0–1 (default 0.5)                  |
+| Scene mode            | Off by default. When nobody is detected, send evenly spaced frames to the model instead of skipping it, so objects and events in an empty scene (weapon on a table, fire, smoke) are still checked. The screening log shows `sceneMode: true` |
+| Scene mode frames     | Frames per clip in scene mode, 1–8 (default 4) |
 | Parallel LLM requests | How many frames the LLM and Hybrid detectors send at once, 1–8 (default 2). Ollama only runs them in parallel if `OLLAMA_NUM_PARALLEL` allows it |
 | Suspicious threshold  | Cut-off for the `yes` probability, 0–1 (default 0.5)                                                    |
 | Notification agent    | Let the model decide channel and urgency (Ollama mode only)                                             |
@@ -457,6 +459,24 @@ python eval/analyze_app_eval.py --results eval/runs/app_v1/results.jsonl \
 - `eval/settings*.json` hold the settings applied before a run (`settings.example.json` is the template).
 - Outputs go to `eval/runs/`, which is git-ignored.
 
+### Comparing configurations and thresholds
+
+```bash
+# same clips for every run: Gemma baseline vs Qwen on the 47-clip subset (add --stratum main for the 38 main clips)
+python eval/compare_runs.py --manifest eval/runs/subset47/subset_manifest.csv \
+    gemma=eval/runs/subset47/baseline_subset.jsonl qwen16=eval/runs/qwen4b_instruct_16f/results.jsonl
+
+# ablation: flags decided in a separate short call (eval/settings_gemma_split.json), then re-threshold from the p(yes) scores
+python eval/run_app_eval.py --manifest eval/runs/subset47/subset_manifest.csv --video-root D:/ucf \
+    --settings eval/settings_gemma_split.json --out eval/runs/gemma_split
+python eval/threshold_sweep.py --results eval/runs/gemma_split/results.jsonl --target-recall 0.9
+python eval/threshold_sweep.py --results eval/runs/gemma_split/results.jsonl --score-field classifier_score
+```
+
+- `run_app_eval.py` now records `suspicious_score`, `classifier_score`, `narrative_score`, `score_source` and `scene_mode`. Runs made before this have no scores and cannot be re-thresholded.
+- `threshold_sweep.py` prints the AUC, the curve and the picks, and a cross-validated recall. Quote the cross-validated line: the other picks choose the threshold on the clips they are measured on.
+- The **Separate flag call** setting decides `suspicious` and `weapon` in a short dedicated call over the same frames, instead of at the end of the narrative call. It roughly doubles the model calls. The narrative's own flag can still raise a video.
+
 ## Known limitations
 
 - Accuracy on real footage has not been established. Compare configurations on your own clips before relying on results, and expect differences from any notebook experiment (FFmpeg vs OpenCV decoding, Ollama quantisation, image preprocessing).
@@ -465,7 +485,7 @@ python eval/analyze_app_eval.py --results eval/runs/app_v1/results.jsonl \
 - A large image input can exceed the model's context. The app reports the error instead of dropping frames. Lower `CCTV_MAX_FRAMES` or enable batching.
 - Description language is fixed to Indonesian by the prompt.
 - The queue is single-user and single-machine, with one shared password for access. There are no per-user accounts, and a session cannot be revoked from the server: signing out only removes the browser's cookie, and a copied cookie stays valid until it expires (12 hours of inactivity) or the password changes. Change `CCTV_UI_PASSWORD` and restart to end every session.
-- Nothing reaches the model when person detection finds nobody. An object such as a weapon lying on a table with nobody in view is therefore never checked, and clips without people are deleted after `CCTV_KEEP_EMPTY_MINUTES`.
+- By default nothing reaches the model when person detection finds nobody, so a weapon lying on a table or a fire in an empty room is never checked. Turn on **Scene mode** (Settings) to send `Scene mode frames per clip` evenly spaced frames to the model in that case. It costs model calls for every empty clip, and its `suspicious` and `weapon` flags come from a different prompt than person clips. Unflagged scene-mode clips are still deleted after `CCTV_KEEP_EMPTY_MINUTES`.
 - Alert delivery is _at least once_ and bounded by `CCTV_ALERT_RETRY_HOURS`. If a channel stays down longer than that, the alert is dropped; it remains visible on the job in the UI.
 - The model client follows HTTP redirects. Only point it at a server you trust.
 
@@ -479,7 +499,7 @@ python eval/analyze_app_eval.py --results eval/runs/app_v1/results.jsonl \
 | Model not installed / cannot reach model server | Start Ollama, run `tools/setup-model.*`, then select the model in Settings                           |
 | First video takes very long                     | Cold model load. Warm up with a short clip                                                           |
 | "The prompt (… tokens) fills the model's context window" | Too many frames for the model's context. Lower `CCTV_MAX_FRAMES`, turn on batching, or set `CCTV_NUM_CTX` (or `OLLAMA_CONTEXT_LENGTH` in Ollama) to `16384` |
-| "no people detected" and no description         | Expected when nobody is in the clip. The model is not called, and the job still completes            |
+| "no people detected" and no description         | Expected when nobody is in the clip and Scene mode is off. The model is not called, and the job still completes |
 | Page has no styling                             | The browser cannot reach the Bootstrap CDN                                                           |
 | Cannot sign in after restart                    | Sessions are tied to the password. Changing `CCTV_UI_PASSWORD` signs everyone out                    |
 | No alerts arrive                                | Run **Test notification**; check each channel's variables; WhatsApp Cloud needs an approved template |

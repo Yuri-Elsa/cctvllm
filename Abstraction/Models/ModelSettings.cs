@@ -12,4 +12,7 @@ public sealed record ModelSettings(string Mode = "local", string Endpoint = "htt
     public int LlmConcurrency { get; init; } = 2;
     public double SuspiciousThreshold { get; init; } = 0.5;
     public bool AgentEnabled { get; init; } = true;
+    public bool SceneMode { get; init; }
+    public int SceneFrames { get; init; } = 4;
+    public bool SeparateClassification { get; init; }
 }

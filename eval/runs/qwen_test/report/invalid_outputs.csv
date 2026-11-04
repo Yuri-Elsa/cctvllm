@@ -1,0 +1,2 @@
+clip_id,class_name,evaluation_split,stratum,expected_suspicious,status,invalid_reason,suspicious,suspicious_score,suspicious_threshold,score_source,weapon,no_people,person_detector,n_frames,app_elapsed_seconds,wall_seconds,app_duration_sec,manifest_span_sec,span_mismatch,model,error,raw_text
+abuse015x264,Abuse,test,main,True,failed,failed,,,,,,False,,16,,76.74,262.5,262.5,False,,"Model server returned 400. request (4349 tokens) exceeds the available context size (4096 tokens), try increasing it",

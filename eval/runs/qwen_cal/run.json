@@ -1,0 +1,36 @@
+{
+  "manifest": "eval/runs/qwen_cal/manifest_cal_subset.csv",
+  "manifest_sha256": "a04ad4926919ff9c3b38ebd0f69355b3a30af0f303bed8947d428b6ece12cd43",
+  "split": "calibration,test",
+  "strata": "all",
+  "n_clips": 86,
+  "settings": {
+    "mode": "local",
+    "endpoint": "http://127.0.0.1:11434/v1",
+    "model": "qwen3-vl:4b-instruct",
+    "personLabels": true,
+    "flagActivity": "",
+    "siteContextEnabled": false,
+    "siteContext": "",
+    "weaponEnabled": true,
+    "batchProcessing": false,
+    "personDetector": "yolo",
+    "personThreshold": 0.25,
+    "personVerifyLow": 0.1,
+    "hybridLlmThreshold": 0.5,
+    "llmConcurrency": 2,
+    "suspiciousThreshold": 0.5,
+    "agentEnabled": true
+  },
+  "settings_hash": "97a9f28640bdae5750957851f589ef093e9bd6094c1fb3614df914b7bcc8377a",
+  "frame_limit": 16,
+  "app_health": {
+    "ok": true,
+    "backend": "ASP.NET Core",
+    "version": "10.0.12",
+    "preflight": "ok"
+  },
+  "base_url": "http://127.0.0.1:8766",
+  "python": "3.13.7",
+  "started_at": "2026-11-03T04:40:13+00:00"
+}

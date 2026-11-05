@@ -15,10 +15,11 @@
 <body><main>
     <div class="eyebrow">SECURITY MONITORING</div>
     <h1>Sign in</h1>
-    <p>Enter the password for this workspace.</p>
+    <p>@(Model.AskUsername ? "Sign in with your account." : "Enter the password for this workspace.")</p>
     <form method="post" asp-controller="Account" asp-action="Login">
         <input type="hidden" name="returnUrl" value="@Model.ReturnUrl">
-        <label>Password<input type="password" name="password" autocomplete="current-password" autofocus required></label>
+        @if (Model.AskUsername) { <label>Username<input type="text" name="username" autocomplete="username" autofocus required></label> }
+        <label>Password<input type="password" name="password" autocomplete="current-password" @(Model.AskUsername ? "" : "autofocus") required></label>
         @if (!string.IsNullOrEmpty(Model.Error)) { <div class="error" role="alert">@Model.Error</div> }
         <button type="submit">Sign in</button>
     </form>

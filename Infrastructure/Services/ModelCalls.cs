@@ -13,6 +13,14 @@ public static class ModelCalls
 
     public static async Task<JsonDocument> Ask(HttpClient client, ModelSettings config, Func<bool, object> payload, bool scores, CancellationToken ct)
     {
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        var ok = false;
+        try { var result = await AskCore(client, config, payload, scores, ct); ok = true; return result; }
+        finally { Metrics.ModelCall(System.Diagnostics.Stopwatch.GetElapsedTime(started), ok); }
+    }
+
+    private static async Task<JsonDocument> AskCore(HttpClient client, ModelSettings config, Func<bool, object> payload, bool scores, CancellationToken ct)
+    {
         try
         {
             using var response = await DescriptionWorker.SendModel(client, config, payload(scores), ct);

@@ -194,6 +194,13 @@ All runtime configuration is through environment variables. In `start.bat` use `
 | `CCTV_API_KEY`     | none                             | Bearer key sent to the model server. Never stored in the browser            |
 | `CCTV_UI_PASSWORD` | none                             | Turns on the sign-in page and protects every page and API call                 |
 | `CCTV_REVIEW_URL`  | `CCTV_URL`                       | Base URL used in review links inside notifications                             |
+| `CCTV_USERS_FILE`  | `<data>/users.json`              | Per-user accounts. When the file exists it replaces `CCTV_UI_PASSWORD`. See *Users and roles* |
+| `CCTV_METRICS_TOKEN` | none                           | Bearer token for `GET /metrics`. Without it, `/metrics` needs a normal sign-in when sign-in is on |
+| `CCTV_HEALTH_INTERVAL` | `30`                         | Seconds between health checks (model server, queue)                            |
+| `CCTV_MODEL_DOWN_CHECKS` | `2`                        | Failed checks in a row before a "model unreachable" alert                      |
+| `CCTV_BACKLOG_ALERT` | `50`                           | Alert when more videos than this wait for `CCTV_BACKLOG_MINUTES`. `0` turns it off |
+| `CCTV_BACKLOG_MINUTES` | `10`                         | How long the queue must stay over the limit                                    |
+| `CCTV_HEALTH_REMINDER_MINUTES` | `30`                 | Repeat a problem that is still there after this long. `0` = once               |
 
 ### Folder watch
 
@@ -390,6 +397,31 @@ Applies **only to files in the RTSP folder**. Uploaded videos and files in a lin
 - Uploaded and linked files are opened by ffmpeg with a protocol and container whitelist (plain local files, common video containers), and video responses are served as `video/*` with `nosniff` and a sandbox CSP.
 - Per-user accounts and OpenID Connect are the planned next step (see `ADS-ARCHITECTURE.md`).
 
+## Users and roles
+
+Create `users.json` in the data folder (or point `CCTV_USERS_FILE` at it). Make each hash with `dotnet run -- hash-password` (it reads the password from stdin, or pass it as an argument):
+
+```json
+[
+  { "name": "ani",  "role": "reviewer", "hash": "pbkdf2-sha256$600000$..." },
+  { "name": "budi", "role": "admin",    "hash": "pbkdf2-sha256$600000$..." }
+]
+```
+
+| Role | Can do |
+| --- | --- |
+| `viewer` | Look at everything, export |
+| `reviewer` | Viewer, plus set verdicts |
+| `admin` | Everything: settings, upload, delete, folder, queue, notifications, audit log, sessions |
+
+A file that exists but is unreadable stops the app, so a typo never opens it to everyone. The file is read at start; restart after a change. Without sign-in (loopback demo) nothing is checked and every action is logged as `local`.
+
+**Audit and sessions (admin only):** `GET /api/audit?limit=200` (newest first, from `audit.jsonl`), `GET /api/sessions`, `POST /api/sessions/{id}/revoke`, `POST /api/sessions/revoke-all` (keeps your own).
+
+**Metrics:** `GET /metrics` in Prometheus format: videos by status, flagged count, oldest waiting age, camera up, model latency histogram, failed model requests, alert deliveries by channel, alerts failed or pending, `cctv_model_up`.
+
+**Health alerts:** besides cameras going offline, the app sends an alert when the model server cannot be reached and when the queue stays over `CCTV_BACKLOG_ALERT`, through the normal notification channels.
+
 ## HTTP API
 
 The UI uses these endpoints, and they are what `eval/run_app_eval.py` drives.
@@ -498,7 +530,8 @@ python eval/threshold_sweep.py --results eval/runs/gemma_split/results.jsonl --s
 - Person IDs and speeds come from a simple tracker at 2 fps and are heuristics, not measurements.
 - A large image input can exceed the model's context. The app reports the error instead of dropping frames. Lower `CCTV_MAX_FRAMES` or enable batching.
 - Description language is fixed to Indonesian by the prompt.
-- The queue is single-user and single-machine, with one shared password for access. There are no per-user accounts, and a session cannot be revoked from the server: signing out only removes the browser's cookie, and a copied cookie stays valid until it expires (12 hours of inactivity) or the password changes. Change `CCTV_UI_PASSWORD` and restart to end every session.
+- The queue is single-machine. Access is either one shared password (`CCTV_UI_PASSWORD`, always admin) or per-user accounts in `users.json` with the roles viewer, reviewer and admin. There is no OpenID Connect sign-in yet. Sessions are kept in memory, so restarting the app signs everybody out. State is still a single `state.json`; a database is not used yet.
+- Face blur is not implemented. See `PRIVACY.md` for what is stored and what is still open.
 - By default nothing reaches the model when person detection finds nobody, so a weapon lying on a table or a fire in an empty room is never checked. Turn on **Scene mode** (Settings) to send `Scene mode frames per clip` evenly spaced frames to the model in that case. It costs model calls for every empty clip, and its `suspicious` and `weapon` flags come from a different prompt than person clips. Unflagged scene-mode clips are still deleted after `CCTV_KEEP_EMPTY_MINUTES`.
 - Alert delivery is _at least once_ and bounded by `CCTV_ALERT_RETRY_HOURS`. If a channel stays down longer than that, the alert is dropped; it remains visible on the job in the UI.
 - The model client follows HTTP redirects. Only point it at a server you trust.

@@ -2,7 +2,7 @@
     @if (User.Identity?.IsAuthenticated == true)
     {
         <span class="local-dot"></span>
-        <span>Signed in</span>
+        <span>Signed in@(User.Identity?.Name is { } who && who != "ui" ? $" as {who} ({User.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value})" : "")</span>
         <form method="post" asp-controller="Account" asp-action="Logout"><button type="submit" class="signout-btn">Sign out</button></form>
     }
     else

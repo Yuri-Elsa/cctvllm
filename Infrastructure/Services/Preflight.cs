@@ -8,7 +8,7 @@ public sealed record PreflightCheck(string Name, string Status, string Detail);
 public sealed record PreflightReport(DateTimeOffset CheckedAt, string Overall, IReadOnlyList<PreflightCheck> Checks);
 
 public sealed class Preflight(QueueStore store, VideoTools videos, RtspIngestService rtsp, IEnumerable<INotifier> notifiers,
-    IHttpClientFactory clients, IWebHostEnvironment env, ILogger<Preflight> logger) : BackgroundService
+    IHttpClientFactory clients, IWebHostEnvironment env, UserStore users, ILogger<Preflight> logger) : BackgroundService
 {
     private readonly SemaphoreSlim gate = new(1, 1);
     private volatile PreflightReport? latest;
@@ -46,7 +46,7 @@ public sealed class Preflight(QueueStore store, VideoTools videos, RtspIngestSer
                 Guard("Model server", () => CheckModel(ct)),
                 Guard("Data folder", () => Task.FromResult(CheckFolders())),
                 Guard("Notifiers", () => Task.FromResult(CheckNotifiers())),
-                Guard("Access", () => Task.FromResult(AccessCheck(new AuthOptions().Password, Environment.GetEnvironmentVariable("CCTV_URL")))));
+                Guard("Access", () => Task.FromResult(users.Enabled ? AccountsCheck(Environment.GetEnvironmentVariable("CCTV_URL")) : AccessCheck(new AuthOptions().Password, Environment.GetEnvironmentVariable("CCTV_URL")))));
             var overall = checks.Any(c => c.Status == "fail") ? "fail" : checks.Any(c => c.Status == "warn") ? "warn" : "ok";
             return latest = new PreflightReport(DateTimeOffset.UtcNow, overall, checks);
         }
@@ -187,6 +187,11 @@ public sealed class Preflight(QueueStore store, VideoTools videos, RtspIngestSer
         }
         catch (Exception) { return ""; }
     }
+
+    private static PreflightCheck AccountsCheck(string? urls) =>
+        !AuthOptions.IsLoopbackOnly(urls) && (urls ?? "").Contains("http://", StringComparison.OrdinalIgnoreCase)
+            ? new PreflightCheck("Access", "warn", "Per-user sign-in is on, but over plain HTTP passwords travel unencrypted. Put the app behind HTTPS (a reverse proxy).")
+            : new PreflightCheck("Access", "ok", "Per-user sign-in is on (users.json).");
 
     internal static PreflightCheck AccessCheck(string? password, string? urls)
     {

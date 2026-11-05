@@ -122,6 +122,8 @@ public sealed class QueueStore : IQueueRepository
             settings = value; Persist();
         }
     }
+    public bool Running { get { lock (gate) return running; } }
+
     public void SetRunning(bool value) { lock (gate) { running = value; Changed?.Invoke(); } }
     public (VideoJob Job, ModelSettings Settings)? Take()
     {

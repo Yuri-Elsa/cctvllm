@@ -99,7 +99,8 @@ public sealed class NotificationDispatcher : BackgroundService
                 {
                     // A critical alert is never held back by the per-camera throttle. A weapon flag counts as
                     // critical even when no agent set an urgency (agent off, no WhatsApp/email).
-                    if (payload.Kind is AlertKind.CameraOffline or AlertKind.CameraRecovered || IsCritical(payload))
+                    if (payload.Kind is AlertKind.CameraOffline or AlertKind.CameraRecovered or AlertKind.ModelDown or AlertKind.ModelRecovered
+                        or AlertKind.QueueBacklog or AlertKind.QueueRecovered || IsCritical(payload))
                     {
                         await Deliver(payload, [payload], stoppingToken);
                         continue;
@@ -189,6 +190,7 @@ public sealed class NotificationDispatcher : BackgroundService
                     if (attempt < options.MaxAttempts) await Task.Delay(options.BackoffBase * Math.Pow(2, attempt - 1), ct);
                 }
             }
+            Metrics.Delivery(notifier.Name, sent);
             if (sent) sentBy.Add(notifier.Name); else failures.Add($"{notifier.Name}: {error}");
         }
         var real = active.Where(n => n.Name != "log").ToList();

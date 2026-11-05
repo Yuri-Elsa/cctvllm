@@ -1,1 +1,1 @@
-public sealed record LoginViewModel(string? ReturnUrl, string? Error);
+public sealed record LoginViewModel(string? ReturnUrl, string? Error, bool AskUsername = false);

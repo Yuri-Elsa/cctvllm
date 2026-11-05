@@ -1,4 +1,7 @@
 using System.Net;
+using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading.Channels;
 using System.Text.Json;
 using Microsoft.AspNetCore.StaticFiles;
@@ -8,8 +11,22 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.HttpOverrides;
 
+// "dotnet run -- hash-password [password]" prints a hash for users.json (the password is read from stdin when it is not given).
+if (args.Length > 0 && args[0] == "hash-password")
+{
+    var typed = args.Length > 1 ? args[1] : Console.ReadLine();
+    if (string.IsNullOrEmpty(typed)) { Console.Error.WriteLine("Usage: hash-password <password>   (or pipe the password in)"); return; }
+    Console.WriteLine(UserStore.Hash(typed));
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 var auth = new AuthOptions();
+// Per-user accounts (users.json) take over from the single shared password when the file exists.
+var dataRoot = Environment.GetEnvironmentVariable("CCTV_DATA_DIR") ?? Path.Combine(builder.Environment.ContentRootPath, "data");
+var users = new UserStore(UserStore.DefaultPath(dataRoot));
+var authOn = auth.Enabled || users.Enabled;
+var sessions = new SessionStore();
 builder.WebHost.UseUrls(Environment.GetEnvironmentVariable("CCTV_URL") ?? "http://127.0.0.1:8766");
 // Ordinary requests (settings, folder, review) are small JSON. Only the upload endpoint raises its own limit.
 builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 1024 * 1024);
@@ -27,7 +44,7 @@ builder.Services.AddControllersWithViews().AddRazorOptions(options => {
     options.ViewLocationFormats.Add("/Web/Views/{1}/{0}.cshtml");
     options.ViewLocationFormats.Add("/Web/Views/Shared/{0}.cshtml");
 });
-if (auth.Enabled)
+if (authOn)
 {
     var passwordVersion = auth.Version;
     builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme).AddCookie(o => {
@@ -44,14 +61,21 @@ if (auth.Enabled)
             return Task.CompletedTask;
         };
         o.Events.OnValidatePrincipal = ctx => {
-            if (ctx.Principal?.FindFirst("pwv")?.Value == passwordVersion) return Task.CompletedTask;
+            // Every request must belong to a session the server still knows (see SessionStore), so a revoked cookie stops working at once.
+            var versionOk = users.Enabled || ctx.Principal?.FindFirst("pwv")?.Value == passwordVersion;
+            if (versionOk && sessions.IsActive(ctx.Principal?.FindFirst("sid")?.Value)) return Task.CompletedTask;
             ctx.RejectPrincipal();
             return ctx.HttpContext.SignOutAsync();
         };
     });
 }
-builder.Services.AddAuthorization(o => { if (auth.Enabled) o.FallbackPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build(); });
+builder.Services.AddAuthorization(o => { if (authOn) o.FallbackPolicy = new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build(); });
 builder.Services.AddSingleton<QueueStore>();
+builder.Services.AddSingleton(users);
+builder.Services.AddSingleton(sessions);
+builder.Services.AddSingleton(sp => new AuditLog(sp.GetRequiredService<QueueStore>().Root));
+builder.Services.AddOptions<HealthOptions>();
+builder.Services.AddHostedService<HealthMonitor>();
 builder.Services.AddSingleton<VideoTools>();
 builder.Services.AddOptions<WatchOptions>();
 builder.Services.AddSingleton<IVideoIngest, VideoIngestService>();
@@ -117,7 +141,7 @@ app.Use(async (ctx, next) => {
     }
 });
 app.UseStaticFiles();
-if (auth.Enabled) { app.UseAuthentication(); app.UseAuthorization(); }
+if (authOn) { app.UseAuthentication(); app.UseAuthorization(); }
 app.MapControllerRoute(name: "default", pattern: "{controller=Home}/{action=Index}/{id?}");
 
 // The browser's folder picker only ever reports a folder *name*, never its path, so a linked
@@ -139,6 +163,23 @@ string ResolveFolder(string raw)
     // Follow a link so that the "app's own data folder" check below sees where it really points.
     return new DirectoryInfo(full).ResolveLinkTarget(true)?.FullName ?? full;
 }
+
+// ---- Roles and audit. Roles rank viewer < reviewer < admin. With sign-in off nothing is checked (local workspace).
+var audit = app.Services.GetRequiredService<AuditLog>();
+string Actor(HttpContext http) => http.User.Identity?.IsAuthenticated == true ? http.User.Identity.Name ?? "unknown" : "local";
+void Log(HttpContext http, string action, string? target = null, string? detail = null) =>
+    audit.Record(Actor(http), http.Connection.RemoteIpAddress?.ToString(), action, target, detail);
+void Need(HttpContext http, string role)
+{
+    if (!authOn) return;
+    // A signed-in user whose role is missing or unknown ranks below viewer and can do nothing.
+    if (Array.IndexOf(UserStore.Roles, http.User.FindFirst(ClaimTypes.Role)?.Value) >= Array.IndexOf(UserStore.Roles, role)) return;
+    Log(http, "denied", http.Request.Path, $"needs {role}");
+    throw new UserError($"This needs the {role} role.", 403);
+}
+static string SettingsDiff(ModelSettings before, ModelSettings after) => string.Join("; ",
+    typeof(ModelSettings).GetProperties().Where(p => !Equals(p.GetValue(before), p.GetValue(after)))
+        .Select(p => p.GetValue(after)?.ToString() is { Length: <= 60 } v ? $"{p.Name}={v}" : $"{p.Name} changed"));
 
 app.MapGet("/api/state", (QueueStore s) => s.Snapshot());
 app.MapGet("/api/events", async (HttpContext http, QueueStore s) => {
@@ -172,7 +213,7 @@ app.MapGet("/api/cameras", (RtspIngestService r) => r.Snapshot());
 // preflight is the last startup check's overall result ("ok", "warn", "fail"), or null while the first one is still running.
 // Open to anyone so a monitor can poll it without logging in; only a signed-in user (or an app without a password) sees details.
 app.MapGet("/api/health", (Preflight p, HttpContext http) =>
-    !auth.Enabled || http.User.Identity?.IsAuthenticated == true
+    !authOn || http.User.Identity?.IsAuthenticated == true
         ? Results.Ok(new { ok = true, backend = "ASP.NET Core", version = Environment.Version.ToString(), preflight = p.Latest?.Overall })
         : Results.Ok(new { ok = true })).AllowAnonymous();
 // Full setup report. ?refresh=true runs the checks again (the "Run check" button in Settings).
@@ -204,7 +245,8 @@ app.MapGet("/api/models", async (string? endpoint, IHttpClientFactory clients, C
         throw new UserError("Model list request timed out. Try again.", 504);
     }
 });
-app.MapPost("/api/settings", (ModelSettings value, QueueStore s) => {
+app.MapPost("/api/settings", (ModelSettings value, QueueStore s, HttpContext http) => {
+    Need(http, "admin");
     if (value.Mode != "local") throw new UserError("Only Ollama (local) is supported.");
     if (ModelEndpointPolicy.Check(value.Endpoint) is { } endpointProblem) throw new UserError(endpointProblem);
     if (string.IsNullOrWhiteSpace(value.Model)) throw new UserError("Enter a model name.");
@@ -216,10 +258,14 @@ app.MapPost("/api/settings", (ModelSettings value, QueueStore s) => {
     if (value.SceneFrames is < 1 or > 8) throw new UserError("Scene mode frames must be between 1 and 8.");
     if ((value.FlagActivity?.Length ?? 0) > 4000 || (value.SiteContext?.Length ?? 0) > 4000)
         throw new UserError("Criteria and context must each be 4,000 characters or less.");
-    s.SetSettings(value with { Endpoint = value.Endpoint.TrimEnd('/'), Model = (value.Model ?? "").Trim() });
+    var before = s.Settings;
+    var after = value with { Endpoint = value.Endpoint.TrimEnd('/'), Model = (value.Model ?? "").Trim() };
+    s.SetSettings(after);
+    Log(http, "settings_changed", null, SettingsDiff(before, after));
     return Results.Ok(new { ok = true });
 });
 app.MapPost("/api/videos", async (HttpRequest request, QueueStore s, VideoTools videos, CancellationToken ct) => {
+    Need(request.HttpContext, "admin");
     if (request.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit) limit.MaxRequestBodySize = VideoTools.MaxBytes;
     // Uploads are the only thing the retention service never cleans up, so give them a ceiling of their own.
     var stored = s.Jobs().Where(j => j.SourcePath is null).Sum(j => j.Bytes);
@@ -245,16 +291,18 @@ app.MapPost("/api/videos", async (HttpRequest request, QueueStore s, VideoTools 
         var info = await videos.Inspect(Path.Combine(dir, "video"), ct);
         job = job with { Duration = info.Duration, Fps = info.Fps, Bytes = bytes };
         await videos.Poster(Path.Combine(dir, "video"), Path.Combine(dir, "poster.jpg"), ct);
-        s.Add(job); return Results.Ok(job);
+        s.Add(job); Log(request.HttpContext, "video_uploaded", job.Id, job.Name); return Results.Ok(job);
     }
     catch { Directory.Delete(dir, true); throw; }
 });
 // Linking a folder only saves the path and asks FolderWatcherService to import it. The call returns
 // at once; progress and the result come from GET /api/folder/status.
-app.MapPost("/api/folder", (LinkRequest value, QueueStore s, ScanCoordinator scans) => {
+app.MapPost("/api/folder", (LinkRequest value, QueueStore s, ScanCoordinator scans, HttpContext http) => {
+    Need(http, "admin");
     if (string.IsNullOrWhiteSpace(value.Path))
     {
         s.SetLinkedFolder(null);
+        Log(http, "folder_unlinked");
         return Results.Ok(new { linkedFolder = (string?)null, importing = false });
     }
     var folder = ResolveFolder(value.Path);
@@ -262,10 +310,12 @@ app.MapPost("/api/folder", (LinkRequest value, QueueStore s, ScanCoordinator sca
         folder.StartsWith(s.Root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
         throw new UserError("That is the app's own data folder. Choose the folder your videos are in.");
     s.SetLinkedFolder(folder);
+    Log(http, "folder_linked", null, folder);
     scans.Request();
     return Results.Ok(new { linkedFolder = folder, importing = true });
 });
-app.MapPost("/api/folder/refresh", (QueueStore s, ScanCoordinator scans) => {
+app.MapPost("/api/folder/refresh", (QueueStore s, ScanCoordinator scans, HttpContext http) => {
+    Need(http, "admin");
     if (s.LinkedFolder is null) throw new UserError("Link a folder first.");
     scans.Request();
     return Results.Ok(new { importing = true });
@@ -288,8 +338,10 @@ app.MapGet("/api/videos/{id}/{asset}", (string id, string asset, QueueStore s, H
     http.Response.Headers.ContentSecurityPolicy = "sandbox; default-src 'none'";
     return Results.File(path, type, enableRangeProcessing: true);
 });
-app.MapPost("/api/notifications/test", async (NotificationDispatcher d, CancellationToken ct) =>
-    Results.Ok(new { results = await d.SendTestAsync(ct) }));
+app.MapPost("/api/notifications/test", async (NotificationDispatcher d, HttpContext http, CancellationToken ct) => {
+    Need(http, "admin");
+    return Results.Ok(new { results = await d.SendTestAsync(ct) });
+});
 app.MapGet("/api/export", (string? format, string? camera, bool? flagged, QueueStore s) => {
     format = (format ?? "csv").ToLowerInvariant();
     if (format is not ("csv" or "json")) throw new UserError("Format must be csv or json.");
@@ -308,23 +360,70 @@ app.MapGet("/api/calibration", (string? camera, bool? assumeNormal, string? form
         ? Results.File(Calibration.ToCsv(report), "text/csv; charset=utf-8", $"cctv-calibration-{DateTime.Now:yyyyMMdd-HHmmss}.csv")
         : Results.Ok(report);
 });
-app.MapPost("/api/queue/{action}", (string action, QueueStore s) => {
+app.MapPost("/api/queue/{action}", (string action, QueueStore s, HttpContext http) => {
+    Need(http, "admin");
     if (action is not ("start" or "pause")) throw new UserError("Unknown queue action.");
-    s.SetRunning(action == "start"); return Results.Ok(new { ok = true });
+    s.SetRunning(action == "start"); Log(http, "queue_" + action); return Results.Ok(new { ok = true });
 });
-app.MapPost("/api/videos/delete", (string[] ids, QueueStore s) => {
+app.MapPost("/api/videos/delete", (string[] ids, QueueStore s, HttpContext http) => {
+    Need(http, "admin");
+    var wanted = (ids ?? []).ToHashSet();
+    var names = s.Jobs().Where(j => wanted.Contains(j.Id)).Select(j => j.Name).Take(20).ToArray();
     var (removed, skipped) = s.RemoveMany(ids ?? []);
+    Log(http, "videos_deleted", null, $"removed={removed} skipped={skipped} names=[{string.Join(", ", names)}] ids=[{string.Join(",", wanted.Take(50))}]");
     return Results.Ok(new { removed, skipped });
 });
-app.MapPost("/api/videos/{id}/review", (string id, ReviewRequest value, QueueStore s) => {
+app.MapPost("/api/videos/{id}/review", (string id, ReviewRequest value, QueueStore s, HttpContext http) => {
+    Need(http, "reviewer");
+    var was = s.Get(id).ReviewState;
     s.SetReview(id, value.State);
+    Log(http, "review_set", id, $"{was ?? "none"} -> {s.Get(id).ReviewState ?? "none"}");
     return Results.Ok(new { ok = true, reviewState = s.Get(id).ReviewState });
 });
-app.MapPost("/api/videos/{id}/{action}", (string id, string action, QueueStore s, DescriptionWorker worker) => {
+app.MapPost("/api/videos/{id}/{action}", (string id, string action, QueueStore s, DescriptionWorker worker, HttpContext http) => {
+    Need(http, "admin");
+    var name = s.Jobs().FirstOrDefault(j => j.Id == id)?.Name;
     if (action == "cancel") worker.Cancel(id);
     else if (action == "retry") s.Retry(id);
     else if (action == "delete") s.Remove(id);
     else throw new UserError("Unknown video action.");
+    Log(http, "video_" + action, id, name);
     return Results.Ok(new { ok = true });
 });
+
+// ---- Audit log, sessions and metrics
+app.MapGet("/api/audit", (int? limit, HttpContext http) => {
+    Need(http, "admin");
+    return Results.Ok(audit.Recent(Math.Clamp(limit ?? 200, 1, 2000)));
+});
+app.MapGet("/api/sessions", (HttpContext http) => {
+    Need(http, "admin");
+    var mine = http.User.FindFirst("sid")?.Value;
+    return Results.Ok(sessions.List().Select(x => new { x.Id, x.User, x.Role, x.Created, x.LastSeen, x.Address, current = x.Id == mine }));
+});
+app.MapPost("/api/sessions/{id}/revoke", (string id, HttpContext http) => {
+    Need(http, "admin");
+    var revoked = sessions.Revoke(id);
+    if (revoked) Log(http, "session_revoked", id);
+    return Results.Ok(new { revoked });
+});
+app.MapPost("/api/sessions/revoke-all", (HttpContext http) => {
+    Need(http, "admin");
+    var revoked = sessions.RevokeAll(http.User.FindFirst("sid")?.Value);
+    Log(http, "sessions_revoked_all", null, $"count={revoked}");
+    return Results.Ok(new { revoked });
+});
+// Prometheus scrapes with a bearer token (CCTV_METRICS_TOKEN). Without a token the page needs a normal sign-in when sign-in is on.
+app.MapGet("/metrics", (HttpContext http, QueueStore s, RtspIngestService r, AlertJournal journal) => {
+    var token = Environment.GetEnvironmentVariable("CCTV_METRICS_TOKEN");
+    if (token is { Length: > 0 })
+    {
+        var given = http.Request.Headers.Authorization.ToString();
+        if (!given.StartsWith("Bearer ", StringComparison.Ordinal) ||
+            !CryptographicOperations.FixedTimeEquals(SHA256.HashData(Encoding.UTF8.GetBytes(given[7..])), SHA256.HashData(Encoding.UTF8.GetBytes(token))))
+            return Results.Unauthorized();
+    }
+    else if (authOn && http.User.Identity?.IsAuthenticated != true) return Results.Unauthorized();
+    return Results.Text(Metrics.Render(s.Jobs(), s.Running, r.Snapshot(), journal.Count, DateTimeOffset.UtcNow), "text/plain; version=0.0.4; charset=utf-8");
+}).AllowAnonymous();
 app.Run();

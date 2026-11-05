@@ -1,4 +1,5 @@
 using System.Net;
+using System.Threading.Channels;
 using System.Text.Json;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.AspNetCore.Http.Features;
@@ -140,6 +141,33 @@ string ResolveFolder(string raw)
 }
 
 app.MapGet("/api/state", (QueueStore s) => s.Snapshot());
+app.MapGet("/api/events", async (HttpContext http, QueueStore s) => {
+    var ct = http.RequestAborted;
+    http.Response.Headers.ContentType = "text/event-stream";
+    http.Response.Headers.CacheControl = "no-cache";
+    http.Response.Headers["X-Accel-Buffering"] = "no";
+    var changed = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropOldest });
+    void OnChanged() => changed.Writer.TryWrite(true);
+    s.Changed += OnChanged;
+    try
+    {
+        await http.Response.WriteAsync("retry: 3000\n\n", ct);
+        await http.Response.Body.FlushAsync(ct);
+        while (!ct.IsCancellationRequested)
+        {
+            string frame;
+            using var idle = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            idle.CancelAfter(TimeSpan.FromSeconds(15));
+            try { await changed.Reader.ReadAsync(idle.Token); frame = "event: changed\ndata: 1\n\n"; }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { frame = ": keep-alive\n\n"; }
+            await http.Response.WriteAsync(frame, ct);
+            await http.Response.Body.FlushAsync(ct);
+            await Task.Delay(300, ct);
+        }
+    }
+    catch (OperationCanceledException) { }
+    finally { s.Changed -= OnChanged; }
+});
 app.MapGet("/api/cameras", (RtspIngestService r) => r.Snapshot());
 // preflight is the last startup check's overall result ("ok", "warn", "fail"), or null while the first one is still running.
 // Open to anyone so a monitor can poll it without logging in; only a signed-in user (or an app without a password) sees details.

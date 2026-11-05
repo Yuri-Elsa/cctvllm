@@ -90,7 +90,7 @@ Once it works, pin the versions you tested so the setup can be reproduced (and s
 
 `tracking/yolov8n.pt` is a PyTorch file, which can run code when loaded. Only use weights you downloaded from the official Ultralytics release.
 
-The app looks for the interpreter in `CCTV_YOLO_PYTHON`. If that is not set it falls back to `../../work/yolo-env/bin/python`, which only exists on the original author's machine, so **set it** (see below).
+The app looks for the interpreter in `CCTV_YOLO_PYTHON`. If that is not set it uses `.venv` next to the app (`.venv/bin/python`, or `.venv\Scripts\python.exe` on Windows), then `python3` / `python` on the PATH. System check reports whether the chosen interpreter can import `cv2` and `ultralytics`.
 
 ### 2. Local model
 
@@ -119,9 +119,19 @@ export CCTV_YOLO_PYTHON="$PWD/.venv/bin/python"
 dotnet run
 ```
 
-`Start Demo.command` is the original macOS launcher. It expects a .NET SDK, Ollama and a YOLO environment in a `../../work/` folder next to the project, so it only works on the machine it was written for.
+`Start Demo.command` is a launcher for macOS and Linux. It uses `dotnet` and `ollama` from the PATH (it starts `ollama serve` when none is running) and then runs the app.
 
 Open **http://127.0.0.1:8766**.
+
+### Docker (alternative to steps 1-3)
+
+```bash
+cp .env.example .env                                 # set CCTV_UI_PASSWORD (8+ characters)
+docker compose up --build
+docker compose exec ollama ollama pull qwen3-vl:4b   # once
+```
+
+Open **http://127.0.0.1:8766**. The compose file runs the app and Ollama together. The app shares Ollama's network because local mode only accepts a model server on localhost, so the port is published on the `ollama` service and bound to 127.0.0.1. Data lives in the `cctv-data` volume. The image installs CPU-only PyTorch (`--build-arg TORCH_INDEX=https://pypi.org/simple` for the default wheels). To link a folder of videos, mount it in `docker-compose.yml` (a commented example is there) and link the container path. GPU use for Ollama is a commented block in the same file. This setup was written without a Docker daemon available, so build it once and report problems.
 
 ### 4. First-run checklist
 
@@ -176,7 +186,7 @@ All runtime configuration is through environment variables. In `start.bat` use `
 | `CCTV_URL`         | `http://127.0.0.1:8766`          | Address to listen on. Binding to a network address requires `CCTV_UI_PASSWORD` |
 | `CCTV_DATA_DIR`    | `<app>/data`                     | Uploads, posters, frames and `state.json`                                      |
 | `CCTV_FFMPEG`      | `ffmpeg` on PATH                 | Path to the FFmpeg executable                                                  |
-| `CCTV_YOLO_PYTHON` | `../../work/yolo-env/bin/python` | Python interpreter with ultralytics and OpenCV                                 |
+| `CCTV_YOLO_PYTHON` | `.venv` in the app folder, then `python3` on PATH | Python interpreter with ultralytics and OpenCV                |
 | `CCTV_MAX_FRAMES`  | `150`                            | Maximum frames sent per video (minimum 2). Lower it to speed up laptops        |
 | `CCTV_MAX_UPLOAD_GB` | `20`                           | Total size of uploaded videos. Uploads are refused (HTTP 507) once it is reached. Retention never deletes uploads, so remove them yourself |
 | `CCTV_NUM_CTX`     | server default                   | Context window (`num_ctx`) sent to Ollama, for example `16384`. If a prompt fills the window the app raises it once by itself; set this to fix a size. Larger windows use more memory |
@@ -434,9 +444,12 @@ dotnet test tests/CctvDemo.Tests
 The unit tests cover authentication and login throttling, folder watching, export, retention, scoring, the notification dispatcher, agent and alert journal, threshold calibration, WhatsApp options and review/preflight logic. `HttpPipelineTests` also starts the real app in memory and checks the security headers, the cross-origin check and the open `/api/health` over HTTP. The evaluation scripts have their own tests with a mock server:
 
 ```bash
-python eval/tests/test_eval_pipeline.py
-python tracking/test_track_people.py
+pip install -r tracking/requirements.txt -r eval/requirements.txt
+python -m unittest discover -s tracking -p "test_live_logic.py" -v
+python -m unittest discover -s tests -p "test_python_scripts.py" -v   # runs the script-style suites in tracking/ and eval/tests/
 ```
+
+Each script-style suite can still be run on its own, for example `python eval/tests/test_eval_pipeline.py`. `.github/workflows/ci.yml` runs `dotnet test`, the two `python -m unittest` commands and a Docker build on every push to `main` and every pull request.
 
 ## Evaluation
 
@@ -454,6 +467,7 @@ python eval/analyze_app_eval.py --results eval/runs/app_v1/results.jsonl \
 
 - Each result also records the probability of `yes` behind the flag (`suspicious_score`, the threshold the app used and where the score came from), so one run can be scored at every threshold. The analysis then adds a **threshold curve** (`threshold_curve.csv`, `threshold_curve.png`), the AUC, and a threshold chosen on the `calibration` split (`--target-recall`, default 0.90) and frozen before it is scored on `test`. Run with `--split calibration,test` for that; with `test` alone the report only shows a point chosen on the same data and labels it optimistic. `--threshold X` (repeatable) reports a threshold you fixed in advance. Results recorded before this change have no scores and are analysed as before, without the curve.
 - Results are appended after every video, so an interrupted run resumes where it stopped.
+- The notebook rows in the report are only comparable on the same clips. The built-in notebook numbers cover the full 91-clip `test/main` (21 clips `person_optional`) and are shown only for a run of exactly that size. For a subset (for example the 47-clip Qwen run) pass `--notebook-predictions <notebook runs/baseline_v2/gated_8/predictions.jsonl>`: the notebook rows are then recomputed on the shared clips and the app row is restricted to the same clips. Without it the notebook rows are left out and the report says why. The notebook threshold row (0.0049) uses a different score scale and is not the app's recall; the app's own figure is the threshold frozen on the calibration split.
 - `--limit N` is a quick smoke test; `--split`, `--strata`, `--redo-failed` and `--timeout` control what runs.
 - `eval/make_subset.py` picks a small balanced subset for quick comparisons of a second configuration.
 - `eval/settings*.json` hold the settings applied before a run (`settings.example.json` is the template).

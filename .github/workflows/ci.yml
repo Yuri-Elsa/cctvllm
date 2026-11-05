@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  dotnet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: dotnet test
+        run: dotnet test tests/CctvDemo.Tests/CctvDemo.Tests.csproj --configuration Release --nologo
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            tracking/requirements.txt
+            eval/requirements.txt
+      - name: Install dependencies (CPU torch)
+        run: |
+          grep -E '^(torch|torchvision)==' tracking/requirements.txt > /tmp/torch-requirements.txt
+          pip install -r /tmp/torch-requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install -r tracking/requirements.txt -r eval/requirements.txt
+      - name: python -m unittest (tracking)
+        run: python -m unittest discover -s tracking -p "test_live_logic.py" -v
+      - name: python -m unittest (script suites)
+        run: python -m unittest discover -s tests -p "test_python_scripts.py" -v
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: docker build
+        run: docker build -t cctvllm .
+      - name: docker compose config
+        run: CCTV_UI_PASSWORD=ci-password docker compose config --quiet

@@ -1,14 +1,13 @@
-#!/bin/zsh
-cd "$(dirname "$0")"
-export DOTNET_CLI_HOME="$PWD/../../work/dotnet-home"
+#!/bin/sh
+# Launcher for macOS and Linux. Uses dotnet and ollama from the PATH; nothing here depends on where the project sits.
+cd "$(dirname "$0")" || exit 1
 export DOTNET_CLI_TELEMETRY_OPTOUT=1
 export DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
-export OLLAMA_MODELS="$PWD/../../work/ollama-models"
 export OLLAMA_NO_CLOUD=1
-export OLLAMA_CONTEXT_LENGTH=8192
-export OLLAMA_NUM_PARALLEL=1
+export OLLAMA_CONTEXT_LENGTH="${OLLAMA_CONTEXT_LENGTH:-8192}"
+export OLLAMA_NUM_PARALLEL="${OLLAMA_NUM_PARALLEL:-1}"
 mkdir -p data
-if ! curl -fsS http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
-  "$PWD/../../work/ollama/ollama" serve > data/ollama.log 2>&1 &
+if command -v ollama >/dev/null 2>&1 && ! curl -fsS http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+  ollama serve > data/ollama.log 2>&1 &
 fi
-"$PWD/../../work/dotnet/dotnet" run --no-launch-profile
+exec dotnet run --no-launch-profile

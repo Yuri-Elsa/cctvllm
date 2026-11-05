@@ -1,5 +1,5 @@
 {
-  "manifest": "D:\\buat kp phr\\cctvllm\\benchmark\\manifest.csv",
+  "manifest": "eval/manifest.csv",
   "manifest_sha256": "78c7060334b0ff18e02e84975d4f5edc49fef3340d77ff78574e312976007446",
   "split": "test",
   "strata": "all",

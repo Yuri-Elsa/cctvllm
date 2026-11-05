@@ -1,0 +1,17 @@
+.git
+.github
+**/bin/
+**/obj/
+.vs/
+data/
+tests/
+eval/
+evaluation.ipynb
+**/__pycache__/
+tracking/.config/
+.env
+.env.*
+*.md
+!README.md
+start.bat
+*.local.bat

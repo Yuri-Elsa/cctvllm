@@ -15,7 +15,7 @@
 
 ## Hasil utama (held-out test)
 
-Angka notebook bawaan dikutip dari output `evaluation.ipynb` (sel 16, 18, 20) dan dihitung pada set penuh test (main: 91 klip, person_optional: 21 klip). Angka itu hanya ditampilkan bila run ini berukuran sama; untuk subset, berikan `--notebook-predictions` agar dihitung pada klip yang sama. Dua acuan dipakai karena angka 0,914 di slide berasal dari threshold 0,0049 pada skor notebook; baris 'flag yes/no' adalah acuan yang memakai flag yang dibangkitkan model.
+Angka notebook bawaan dikutip dari output `evaluation.ipynb` (sel 16, 18, 20) dan dihitung pada set penuh test (main: 91 klip, person_optional: 21 klip). Angka itu hanya ditampilkan bila run ini berukuran sama; untuk subset, berikan `--notebook-predictions` agar dihitung pada klip yang sama. Dua acuan dipakai: baris 'flag yes/no' memakai flag yang dibangkitkan model, sedangkan baris threshold 0,0049 memakai skor notebook yang skalanya berbeda dari aplikasi. Recall baris threshold itu bukan angka sistem aplikasi; untuk aplikasi pakai titik terbekukan dari calibration di bagian kurva threshold.
 
 Baris **Aplikasi** memakai flag yang diputuskan aplikasi saat run (threshold p(yes) = 0.5). Bagian 'Kurva threshold' di bawah menyapu semua threshold dari skor yang direkam.
 

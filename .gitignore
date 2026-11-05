@@ -19,6 +19,7 @@ start.bat
 *.local.bat
 .env
 .env.*
+!.env.example
 
 # test videos live outside the repo
 testvideos/

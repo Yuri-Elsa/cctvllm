@@ -1,0 +1,51 @@
+# docker compose up --build
+# 1. cp .env.example .env and set CCTV_UI_PASSWORD (8+ characters).
+# 2. docker compose exec ollama ollama pull qwen3-vl:4b     (once; the model is kept in the ollama volume)
+# 3. Open http://127.0.0.1:8766
+#
+# The app's "local" mode only accepts a model server on localhost, so the app container joins the
+# ollama container's network (network_mode below). That is why the app's port is published on the
+# ollama service, and why the default endpoint http://127.0.0.1:11434/v1 works unchanged.
+# The port is bound to 127.0.0.1 on purpose. The app listens on all interfaces inside the container,
+# so it needs a password (required below) and, for any other host, HTTPS in front of it.
+services:
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    environment:
+      OLLAMA_NO_CLOUD: "1"
+      OLLAMA_CONTEXT_LENGTH: "8192"
+      OLLAMA_NUM_PARALLEL: "1"
+    volumes:
+      - ollama:/root/.ollama
+    ports:
+      - "127.0.0.1:8766:8766"
+    # NVIDIA GPU (needs the NVIDIA Container Toolkit): uncomment.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  cctv:
+    build: .
+    restart: unless-stopped
+    network_mode: "service:ollama"
+    depends_on:
+      - ollama
+    environment:
+      CCTV_UI_PASSWORD: ${CCTV_UI_PASSWORD:?Set CCTV_UI_PASSWORD (8+ characters) in .env}
+      CCTV_WATCH: "1"
+      CCTV_AUTORUN: "1"
+      # CCTV_MAX_FRAMES: "16"
+      # RTSP cameras: CCTV_CAMERAS=lobby and CCTV_RTSP_LOBBY=rtsp://user:password@host:554/stream1 (see the README)
+    volumes:
+      - cctv-data:/data
+      # To link a folder of videos in the UI, mount it and link /videos there:
+      # - ${CCTV_VIDEOS_DIR:-./videos}:/videos:ro
+
+volumes:
+  ollama:
+  cctv-data:

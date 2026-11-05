@@ -1,0 +1,4 @@
+# Needed by eval/*.py and eval/tests. numpy is pinned by tracking/requirements.txt.
+pandas>=2.2
+numpy
+matplotlib

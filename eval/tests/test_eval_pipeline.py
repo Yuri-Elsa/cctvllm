@@ -206,7 +206,7 @@ def main():
         sub_main = [r for r in main_rows if r["clip_id"] in keep]
         check(code == 0 and f"({len(sub_main)} klip yang sama)" in rep_part and "dibatasi ke irisan" in rep_part,
               f"partial notebook coverage limits both sides to the {len(sub_main)} shared clips")
-        check("Notebook, flag yes/no (gated_8)" not in rep_part and "slide: 0.914" not in rep_part,
+        check("Notebook, flag yes/no (gated_8)" not in rep_part and "(set penuh)" not in rep_part,
               "hard-coded rows never mix into a per-video comparison")
 
         # unit check of the reference chooser: full-size group keeps the hard-coded numbers, others do not

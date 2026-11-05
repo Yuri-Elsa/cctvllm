@@ -14,8 +14,21 @@ public sealed class PersonTracking
     public const double ModelMinGap = 1.0;      // minimum seconds between frames sent onward
     public const double MotionConf = 0.25;
 
-    public static string PythonPath(string root) => Environment.GetEnvironmentVariable("CCTV_YOLO_PYTHON") ??
-        Path.GetFullPath(Path.Combine(root, "../../work/yolo-env/bin/python"));
+    public static string PythonPath(string root)
+    {
+        if (Environment.GetEnvironmentVariable("CCTV_YOLO_PYTHON") is { Length: > 0 } configured) return configured;
+        var windows = OperatingSystem.IsWindows();
+        var venv = windows ? Path.Combine(root, ".venv", "Scripts", "python.exe") : Path.Combine(root, ".venv", "bin", "python");
+        if (File.Exists(venv)) return venv;
+        var names = windows ? new[] { "python.exe" } : new[] { "python3", "python" };
+        foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+            foreach (var name in names)
+            {
+                var candidate = Path.Combine(dir, name);
+                if (File.Exists(candidate)) return candidate;
+            }
+        return venv;
+    }
     public static string WeightsPath(string root) => Path.Combine(root, "tracking/yolov8n.pt");
 
     public static async Task<Detection> Run(

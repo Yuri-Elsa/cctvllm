@@ -15,7 +15,9 @@
 
 ## Hasil utama (held-out test)
 
-Angka notebook dikutip dari output `evaluation.ipynb` (sel 16, 18, 20). Dua acuan dipakai karena aplikasi memakai flag `suspicious` yang dibangkitkan model, **bukan** threshold 0,0049 pada skor logit. Angka 0,914 di slide berasal dari threshold itu; acuan yang sebanding dengan aplikasi adalah baris 'flag yes/no'.
+Angka notebook bawaan dikutip dari output `evaluation.ipynb` (sel 16, 18, 20) dan dihitung pada set penuh test (main: 91 klip, person_optional: 21 klip). Angka itu hanya ditampilkan bila run ini berukuran sama; untuk subset, berikan `--notebook-predictions` agar dihitung pada klip yang sama. Dua acuan dipakai: baris 'flag yes/no' memakai flag yang dibangkitkan model, sedangkan baris threshold 0,0049 memakai skor notebook yang skalanya berbeda dari aplikasi. Recall baris threshold itu bukan angka sistem aplikasi; untuk aplikasi pakai titik terbekukan dari calibration di bagian kurva threshold.
+
+Run ini tidak menyimpan skor p(yes) (`suspicious_score`), jadi hanya threshold yang dipakai aplikasi saat run yang bisa dinilai. Jalankan ulang dengan `run_app_eval.py` versi terbaru untuk kurva threshold.
 
 ### test / main (n=91, positif=70, Normal=21)
 
@@ -24,7 +26,7 @@ Angka notebook dikutip dari output `evaluation.ipynb` (sel 16, 18, 20). Dua acua
 | Notebook, flag yes/no (gated_8) | 0.629 | 1.000 | 0.772 | 0.000 | 0.483 | 44/26/0/21 |
 | Notebook, flag yes/no (ungated_8) | 0.614 | 1.000 | 0.761 | 0.000 | 0.472 | 43/27/0/21 |
 | Notebook, flag yes/no (gated_16) | 0.586 | 1.000 | 0.739 | 0.000 | 0.451 | 41/29/0/21 |
-| Notebook, threshold 0.0049 (slide: 0.914) | 0.914 | 0.955 | 0.934 | 0.143 | 0.736 | 64/6/3/18 |
+| Notebook, threshold 0.0049 (set penuh) | 0.914 | 0.955 | 0.934 | 0.143 | 0.736 | 64/6/3/18 |
 | **Aplikasi** (flag model) | 0.114 [0.043-0.200] | 0.727 [0.434-0.903] | 0.211 [0.090-0.333] | 0.200 [0.070-0.452] | 0.242 [0.165-0.319] | 8/57/3/12 |
 
 Baris aplikasi menampilkan CI 95%: recall, F1 dan review rate dengan bootstrap (2000 resampel, positif dan Normal diambil terpisah); precision dan false alarm dengan interval Wilson, karena bootstrap memberi interval selebar nol saat jumlah kejadiannya nol.
@@ -32,7 +34,7 @@ Baris aplikasi menampilkan CI 95%: recall, F1 dan review rate dengan bootstrap (
 Coverage aplikasi: 87.9% (80/91 valid; 5 positif dan 6 Normal tidak valid). Recall dihitung atas semua positif, jadi output tidak valid dihitung sebagai terlewat.
 
 - Recall aplikasi 0.114: lebih rendah dari notebook flag yes/no; batas atas CI 0.200 di bawah 0.629.
-- Terhadap angka di slide: lebih rendah dari angka di slide; batas atas CI 0.200 di bawah 0.914.
+- Terhadap notebook threshold 0.0049 (set penuh): lebih rendah dari notebook threshold 0.0049 (set penuh); batas atas CI 0.200 di bawah 0.914.
 - Target operasional notebook adalah recall 0,90: belum tercapai pada titik estimasi.
 
 ### test / person_optional (n=21, positif=21, Normal=0)
@@ -40,7 +42,7 @@ Coverage aplikasi: 87.9% (80/91 valid; 5 positif dan 6 Normal tidak valid). Reca
 | Pipeline | Recall (semua positif) | Precision | F1 | False alarm (Normal) | Review rate | TP/FN/FP/TN |
 |---|---|---|---|---|---|---|
 | Notebook, flag yes/no (gated_8) | 0.524 | 1.000 | 0.688 | n/a | 0.524 | 11/10/0/0 |
-| Notebook, threshold 0.0049 (slide: 0.914) | 0.714 | 1.000 | 0.833 | n/a | 0.714 | 15/6/0/0 |
+| Notebook, threshold 0.0049 (set penuh) | 0.714 | 1.000 | 0.833 | n/a | 0.714 | 15/6/0/0 |
 | **Aplikasi** (flag model) | 0.238 [0.095-0.429] | 1.000 [0.566-1.000] | 0.385 [0.174-0.600] | n/a | 0.238 [0.095-0.429] | 5/16/0/0 |
 
 Baris aplikasi menampilkan CI 95%: recall, F1 dan review rate dengan bootstrap (2000 resampel, positif dan Normal diambil terpisah); precision dan false alarm dengan interval Wilson, karena bootstrap memberi interval selebar nol saat jumlah kejadiannya nol.
@@ -79,6 +81,6 @@ Waktu proses aplikasi per video: median 49.3 s, p90 78.4 s, maks 108.6 s (tidak 
 - Benchmark kecil: 70 positif dan 21 Normal pada test/main. Interval kepercayaan lebar; baca CI, bukan hanya titik estimasi.
 - Dataset UCF-Crime/UCA, bukan rekaman CCTV kantor. Hasil ini tidak menjawab kinerja di lapangan.
 - Perbedaan pipeline selain model: jumlah frame (sampai 150 vs 8), gating orang tanpa fallback, prompt, parsing JSON, dekode FFmpeg vs OpenCV.
-- Aplikasi tidak punya threshold yang dapat dikalibrasi. Memakai skor logit seperti di notebook membutuhkan perubahan kode.
+- Run ini tidak merekam skor p(yes), jadi threshold tidak bisa dikalibrasi dari hasilnya.
 - Label benchmark mengikuti kelas anomali UCF (bukan penilaian kecurigaan oleh petugas).
 - Satu kali jalan dengan decoding greedy; variasi antar-jalan tidak diukur.

@@ -37,16 +37,16 @@ NOTEBOOK_REFERENCE = {
         "Notebook, flag yes/no (gated_8)": dict(TP=44, FN=26, FP=0, TN=21, review_rate=0.4835),
         "Notebook, flag yes/no (ungated_8)": dict(TP=43, FN=27, FP=0, TN=21, review_rate=0.4725),
         "Notebook, flag yes/no (gated_16)": dict(TP=41, FN=29, FP=0, TN=21, review_rate=0.4505),
-        "Notebook, threshold 0.0049 (slide: 0.914)": dict(TP=64, FN=6, FP=3, TN=18, review_rate=0.7363),
+        "Notebook, threshold 0.0049 (set penuh)": dict(TP=64, FN=6, FP=3, TN=18, review_rate=0.7363),
     },
     "person_optional": {
         "Notebook, flag yes/no (gated_8)": dict(TP=11, FN=10, FP=0, TN=0, review_rate=0.5238),
-        "Notebook, threshold 0.0049 (slide: 0.914)": dict(TP=15, FN=6, FP=0, TN=0, review_rate=0.7143),
+        "Notebook, threshold 0.0049 (set penuh)": dict(TP=15, FN=6, FP=0, TN=0, review_rate=0.7143),
     },
 }
 FULL_SET_SIZE = {"main": (91, 70), "person_optional": (21, 21)}  # (clips, positives) behind NOTEBOOK_REFERENCE
 FLAG_FULL = "Notebook, flag yes/no (gated_8)"
-THR_FULL = "Notebook, threshold 0.0049 (slide: 0.914)"
+THR_FULL = "Notebook, threshold 0.0049 (set penuh)"
 DEGENERATE_SHARE = 0.95
 
 
@@ -476,7 +476,7 @@ def threshold_section(df, sweep, agg, run, args, rng, nb=None):
             rec = s_t["positive_recall_all"]
             ref_txt = ""
             if nbref.thr:
-                name = ("angka di slide" if nbref.source == "bawaan"
+                name = ("notebook threshold 0.0049 (set penuh)" if nbref.source == "bawaan"
                         else f"notebook threshold {args.notebook_threshold:.4f} ({len(nbref.sub)} klip yang sama)")
                 ref_txt = (verdict(rec, ci_t.get("positive_recall_all"), from_counts(nbref.thr)["recall"], name) or "n/a") + "; "
             notes.append("Recall di titik terbekukan: " + ref_txt + f"target {target:.0%} "
@@ -678,8 +678,9 @@ def main():
         L.append("Angka notebook bawaan dikutip dari output `evaluation.ipynb` (sel 16, 18, 20) dan dihitung pada set "
                  "penuh test (main: 91 klip, person_optional: 21 klip). Angka itu hanya ditampilkan bila run ini "
                  "berukuran sama; untuk subset, berikan `--notebook-predictions` agar dihitung pada klip yang sama. "
-                 "Dua acuan dipakai karena angka 0,914 di slide berasal dari threshold 0,0049 pada skor notebook; baris "
-                 "'flag yes/no' adalah acuan yang memakai flag yang dibangkitkan model.\n")
+                 "Dua acuan dipakai: baris 'flag yes/no' memakai flag yang dibangkitkan model, sedangkan baris threshold "
+                 "0,0049 memakai skor notebook yang skalanya berbeda dari aplikasi. Recall baris threshold itu bukan angka "
+                 "sistem aplikasi; untuk aplikasi pakai titik terbekukan dari calibration di bagian kurva threshold.\n")
     if scored_any:
         ths = sorted({round(float(x), 6) for x in df.suspicious_threshold.dropna()}) if "suspicious_threshold" in df else []
         L.append("Baris **Aplikasi** memakai flag yang diputuskan aplikasi saat run"
@@ -730,7 +731,7 @@ def main():
                 L.append(f"- Recall aplikasi {num(rec)}: "
                          f"{verdict(rec, ci.get('positive_recall_all'), from_counts(nbref.flag)['recall'], 'notebook flag yes/no')}.")
             if nbref.thr:
-                name = ("angka di slide" if nbref.source == "bawaan"
+                name = ("notebook threshold 0.0049 (set penuh)" if nbref.source == "bawaan"
                         else f"notebook threshold {args.notebook_threshold:.4f} (klip yang sama)")
                 L.append(f"- Terhadap {name}: "
                          f"{verdict(rec, ci.get('positive_recall_all'), from_counts(nbref.thr)['recall'], name)}.")

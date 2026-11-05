@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text.RegularExpressions;
 
-public sealed class VideoTools(IWebHostEnvironment env)
+public sealed class VideoTools
 {
     public static readonly int MaxFrames = int.TryParse(Environment.GetEnvironmentVariable("CCTV_MAX_FRAMES"), out var frames) && frames >= 2 ? frames : 150;
     public const long MaxBytes = 500L * 1024 * 1024;
@@ -10,14 +10,12 @@ public sealed class VideoTools(IWebHostEnvironment env)
     public static readonly long MaxUploadBytes = double.TryParse(Environment.GetEnvironmentVariable("CCTV_MAX_UPLOAD_GB"),
         NumberStyles.Float, CultureInfo.InvariantCulture, out var uploadGb) && uploadGb > 0
         ? (long)(uploadGb * 1024 * 1024 * 1024) : 20L * 1024 * 1024 * 1024;
-    private readonly string ffmpeg = Environment.GetEnvironmentVariable("CCTV_FFMPEG") is { Length: > 0 } configured ? configured : DevFfmpeg(env.ContentRootPath);
+    // CCTV_FFMPEG when set, otherwise ffmpeg from the PATH.
+    private readonly string ffmpeg = Environment.GetEnvironmentVariable("CCTV_FFMPEG") is { Length: > 0 } configured ? configured : "ffmpeg";
 
-    // The author's own build sits next to the project. Anywhere else, fall back to ffmpeg on the PATH.
-    private static string DevFfmpeg(string root)
-    {
-        var dev = Path.GetFullPath(Path.Combine(root, "../../work/demo-deps/imageio_ffmpeg/binaries/ffmpeg-macos-aarch64-v7.1"));
-        return File.Exists(dev) ? dev : "ffmpeg";
-    }
+    // The environment parameter is kept so existing callers (DI, tests) do not change.
+    public VideoTools(IWebHostEnvironment env) { }
+
     public string FfmpegPath => ffmpeg;
 
     // Uploaded and linked files are untrusted input. Without these, ffmpeg will follow playlists

@@ -2,6 +2,7 @@ const $ = id => document.getElementById(id);
 const escapeHtml = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const duration = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 let state = { jobs: [], running: false, settings: {} }, cameras = [], scan = {}, selected = null, queueFilter = 'all', cameraFilter = 'all', queueKey = '', checked = new Set(), detailKey = '', cameraOptionsKey = '', cameraPanelHtml = '', seenScan, uploading = false, timer;
+let filters = { q: '', dateFrom: '', dateTo: '', timeFrom: '', timeTo: '' }, timelineOn = false, timelineKey = '', eventsOk = false, eventTick = 0, refreshing = false, refreshAgain = false;
 function toast(text) { $('toast').textContent = text; $('toast').className = 'visible'; clearTimeout(timer); timer = setTimeout(() => $('toast').className = '', 7000) }
 async function api(path, options = {}) { const r = await fetch(path, options); if (r.status === 401) { location.href = '/Account/Login'; throw Error('Signed out. Opening the sign-in page…') } const data = await r.json(); if (!r.ok) throw Error(data.detail || 'Request failed.'); return data }
 async function refresh() {
@@ -34,7 +35,7 @@ const reviewChip = j => j.reviewState && REVIEW[j.reviewState] ? `<span class="r
 const notifyChip = j => { const n = notifyInfo(j); return n && (n.cls === 'fail' || n.cls === 'warn') ? '<span class="notify-chip">Notify failed</span>' : '' };
 const reviewBar = j => {
     const flagged = isFlagged(j);
-    return `<div class="review" role="group" aria-label="${flagged ? 'Review this alert' : 'Check this video that was not flagged'}"><span class="review-label">${flagged ? 'Your review' : 'Was it really normal?'}</span>${REVIEW_FOR[flagged ? 'flagged' : 'unflagged'].map(value => `<button type="button" class="review-${value}" data-review="${j.id}" data-state="${value}" aria-pressed="${j.reviewState === value}">${REVIEW[value]}</button>`).join('')}</div>`;
+    return `<div class="review" role="group" aria-label="${flagged ? 'Review this alert' : 'Check this video that was not flagged'}"><span class="review-label">${flagged ? 'Your review' : 'Was it really normal?'}</span>${REVIEW_FOR[flagged ? 'flagged' : 'unflagged'].map(value => `<button type="button" class="review-${value}" data-review="${j.id}" data-state="${value}" aria-keyshortcuts="${KEY_OF[value]}" aria-pressed="${j.reviewState === value}">${REVIEW[value]} <kbd>${KEY_OF[value]}</kbd></button>`).join('')}<span class="review-hint">J / K: next / previous video</span></div>`;
 };
 const matchesCamera = j => cameraFilter === 'all' || (cameraFilter === NO_CAMERA ? !j.cameraName : j.cameraName === cameraFilter);
 const cameraChip = j => j.cameraName ? `<span class="camera-chip">${escapeHtml(j.cameraName)}</span>` : '';
@@ -74,7 +75,7 @@ function setQueueFilter(filter) {
 }
 function render() {
     syncCameraFilter();
-    const visibleJobs = state.jobs.filter(j => matchesCamera(j) && (queueFilter !== 'flagged' || isFlagged(j)));
+    const visibleJobs = state.jobs.filter(isVisible);
     $('showFlagged').setAttribute('aria-pressed', String(queueFilter === 'flagged'));
     $('filterAll').setAttribute('aria-pressed', String(queueFilter === 'all'));
     $('filterFlagged').setAttribute('aria-pressed', String(queueFilter === 'flagged'));
@@ -100,8 +101,9 @@ function render() {
     $('linkFolder').textContent = linked ? 'Change' : 'Link a folder';
     $('refreshFolder').hidden = !linked;
     $('unlinkFolder').hidden = !linked;
-    const key = JSON.stringify([selected, queueFilter, cameraFilter, [...checked], state.jobs.map(j => [j.id, j.status, j.stage, j.suspicious, j.weapon, j.reviewState, j.notifiedAt, j.notifyError, j.screening?.agent?.action])]);
-    if (key !== queueKey) { queueKey = key; $('queue').innerHTML = visibleJobs.length ? visibleJobs.map(j => `<div class="queue-item ${selected === j.id ? 'selected' : ''}" role="button" tabindex="0" data-select="${j.id}" aria-label="View video ${state.jobs.indexOf(j) + 1}: ${escapeHtml(j.cameraName ? j.cameraName + ', ' : '')}${escapeHtml(j.name)}"><input type="checkbox" data-check="${j.id}" ${checked.has(j.id) ? 'checked' : ''} ${canSelect(j) ? '' : 'disabled'} aria-label="Select ${escapeHtml(j.name)}"><span class="queue-number" aria-hidden="true">${state.jobs.indexOf(j) + 1}</span><img src="/api/videos/${j.id}/poster.jpg" alt=""><div class="row-info"><span class="row-name">${escapeHtml(j.name)}</span><div class="row-meta">${cameraChip(j)}${segmentLabel(j)}<span>${duration(j.duration)} · ${(j.bytes / 1048576).toFixed(1)} MB</span>${reviewChip(j)}${notifyChip(j)}</div></div><span class="queue-status ${isDropped(j) ? 'dropped' : isFlagged(j) ? 'flagged' : j.status}">${isDropped(j) ? 'Dropped' : isFlagged(j) ? 'Flagged' : j.status === 'completed' ? 'Ready' : j.status === 'processing' ? 'Processing' : j.status === 'queued' ? 'Queued' : j.status === 'failed' ? 'Failed' : 'Cancelled'}</span><button class="remove" data-id="${j.id}" data-action="${['queued', 'processing'].includes(j.status) ? 'cancel' : 'delete'}" aria-label="${['queued', 'processing'].includes(j.status) ? 'Cancel' : 'Remove'} ${escapeHtml(j.name)}">×</button></div>`).join('') : `<div class="empty">${queueFilter === 'flagged' ? 'No flagged videos' + (cameraFilter === 'all' ? '.' : ' for this camera.') : cameraFilter !== 'all' ? 'No videos for this camera yet.' : 'No videos added.'}</div>` }
+    const key = JSON.stringify([selected, queueFilter, cameraFilter, filters, [...checked], state.jobs.map(j => [j.id, j.status, j.stage, j.suspicious, j.weapon, j.reviewState, j.notifiedAt, j.notifyError, j.screening?.agent?.action])]);
+    if (key !== queueKey) { queueKey = key; $('queue').innerHTML = visibleJobs.length ? visibleJobs.map(j => `<div class="queue-item ${selected === j.id ? 'selected' : ''}" role="button" tabindex="0" data-select="${j.id}" aria-label="View video ${state.jobs.indexOf(j) + 1}: ${escapeHtml(j.cameraName ? j.cameraName + ', ' : '')}${escapeHtml(j.name)}"><input type="checkbox" data-check="${j.id}" ${checked.has(j.id) ? 'checked' : ''} ${canSelect(j) ? '' : 'disabled'} aria-label="Select ${escapeHtml(j.name)}"><span class="queue-number" aria-hidden="true">${state.jobs.indexOf(j) + 1}</span><img src="/api/videos/${j.id}/poster.jpg" alt=""><div class="row-info"><span class="row-name">${escapeHtml(j.name)}</span><div class="row-meta">${cameraChip(j)}${segmentLabel(j)}<span>${duration(j.duration)} · ${(j.bytes / 1048576).toFixed(1)} MB</span>${reviewChip(j)}${notifyChip(j)}</div></div><span class="queue-status ${isDropped(j) ? 'dropped' : isFlagged(j) ? 'flagged' : j.status}">${isDropped(j) ? 'Dropped' : isFlagged(j) ? 'Flagged' : j.status === 'completed' ? 'Ready' : j.status === 'processing' ? 'Processing' : j.status === 'queued' ? 'Queued' : j.status === 'failed' ? 'Failed' : 'Cancelled'}</span><button class="remove" data-id="${j.id}" data-action="${['queued', 'processing'].includes(j.status) ? 'cancel' : 'delete'}" aria-label="${['queued', 'processing'].includes(j.status) ? 'Cancel' : 'Remove'} ${escapeHtml(j.name)}">×</button></div>`).join('') : `<div class="empty">${hasExtraFilters() ? 'No videos match these filters.' : queueFilter === 'flagged' ? 'No flagged videos' + (cameraFilter === 'all' ? '.' : ' for this camera.') : cameraFilter !== 'all' ? 'No videos for this camera yet.' : 'No videos added.'}</div>` }
+    renderTimeline(visibleJobs); $('clearFilters').hidden = !hasExtraFilters();
     const job = state.jobs.find(j => j.id === selected); const detail = JSON.stringify(job ?? null); if (detail === detailKey) return; detailKey = detail;
     $('status').textContent = job?.stage ?? '';
     if (job && $('detail').dataset.id === job.id) { $('result').innerHTML = result(job); return }
@@ -237,7 +239,7 @@ $('close').onclick = () => $('settings').close();
 const thresholdValue = id => { const v = parseFloat($(id).value); if (!Number.isFinite(v) || v < 0 || v > 1) throw Error('Thresholds must be numbers between 0 and 1.'); return v };
 $('settingsForm').onsubmit = async e => { e.preventDefault(); try { await api('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: $('mode').value, endpoint: $('endpoint').value, model: $('model').value, personLabels: $('personLabels').checked, batchProcessing: $('batchProcessing').checked, flagActivity: $('flagActivity').value, siteContextEnabled: $('siteContextEnabled').checked, siteContext: $('siteContext').value, weaponEnabled: $('weaponEnabled').checked, personDetector: $('personDetector').value, personThreshold: thresholdValue('personThreshold'), personVerifyLow: thresholdValue('personVerifyLow'), hybridLlmThreshold: thresholdValue('hybridLlmThreshold'), llmConcurrency: Math.round(Number($('llmConcurrency').value) || 2), suspiciousThreshold: thresholdValue('suspiciousThreshold'), agentEnabled: $('agentEnabled').checked, sceneMode: $('sceneMode').checked, sceneFrames: Math.round(Number($('sceneFrames').value) || 4), separateClassification: $('separateClassification').checked }) }); $('settings').close(); await refresh(); toast('Settings saved.') } catch (e) { $('settingsError').textContent = e.message } };
 const canSelect = j => j.status !== 'processing';
-const isVisible = j => matchesCamera(j) && (queueFilter !== 'flagged' || isFlagged(j));
+const isVisible = j => matchesCamera(j) && (queueFilter !== 'flagged' || isFlagged(j)) && matchesFilters(j);
 $('selectAll').onclick = () => { const ids = state.jobs.filter(j => isVisible(j) && canSelect(j)).map(j => j.id); const all = ids.every(id => checked.has(id)); ids.forEach(id => all ? checked.delete(id) : checked.add(id)); render() };
 async function deleteJobs(ids, label) {
     if (!ids.length || !confirm(`Delete ${label}? This cannot be undone. Original files in a linked folder are not touched.`)) return;
@@ -254,9 +256,7 @@ document.addEventListener('click', async e => {
     const action = e.target.closest('[data-action]'); if (action) { try { await api(`/api/videos/${action.dataset.id}/${action.dataset.action}`, { method: 'POST' }); await refresh() } catch (e) { toast(e.message) } return }
     const review = e.target.closest('[data-review]');
     if (review) {
-        const job = state.jobs.find(j => j.id === review.dataset.review); if (!job) return;
-        const next = job.reviewState === review.dataset.state ? null : review.dataset.state;   // pressing the active verdict clears it
-        try { await api(`/api/videos/${job.id}/review`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ state: next }) }); await refresh() } catch (err) { toast(err.message) }
+        const job = state.jobs.find(j => j.id === review.dataset.review); if (job) await setReview(job, review.dataset.state);
         return
     }
     const row = e.target.closest('[data-select]'); if (row) { selected = row.dataset.select; render(); return }
@@ -265,7 +265,11 @@ document.addEventListener('click', async e => {
 });
 document.addEventListener('keydown', e => { const row = e.target.closest('[data-select]'); if (row && e.target === row && ['Enter', ' '].includes(e.key)) { e.preventDefault(); selected = row.dataset.select; render() } });
 { const h = location.hash.match(/job=([0-9a-f]{32})/); if (h) selected = h[1] }
-refresh(); setInterval(refresh, 1200);
+// Live updates: the server pushes a "changed" message (SSE) and the page reloads at once. The timer only keeps camera
+// status fresh and is the fallback: every 1.2 s while the stream is down, about every 5 s while it is up.
+async function reload() { if (refreshing) { refreshAgain = true; return } refreshing = true; try { await refresh() } finally { refreshing = false; if (refreshAgain) { refreshAgain = false; reload() } } }
+if (window.EventSource) { const events = new EventSource('/api/events'); events.onopen = () => { eventsOk = true }; events.onerror = () => { eventsOk = false }; events.addEventListener('changed', reload) }
+refresh(); setInterval(() => { if (!eventsOk || ++eventTick % 4 === 0) reload() }, 1200);
 
 $('navSettings').onclick = () => $('settingsButton').click();
 
@@ -374,3 +378,65 @@ function exportJobs(format) {
 }
 $('exportCsv').onclick = () => exportJobs('csv');
 $('exportJson').onclick = () => exportJobs('json');
+
+// ---- Search and date/hour filters ---------------------------------------------------------------------------------
+const jobTime = j => new Date(j.segmentStart || j.created);
+const localDay = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const minuteOf = v => { const [h, m] = v.split(':').map(Number); return h * 60 + m };
+const hasExtraFilters = () => Object.values(filters).some(Boolean);
+function matchesFilters(j) {
+    const words = filters.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (words.length) { const text = `${j.description ?? ''} ${j.name} ${j.cameraName ?? ''}`.toLowerCase(); if (!words.every(w => text.includes(w))) return false }
+    const t = jobTime(j), day = localDay(t), at = t.getHours() * 60 + t.getMinutes();
+    if (filters.dateFrom && day < filters.dateFrom) return false;
+    if (filters.dateTo && day > filters.dateTo) return false;
+    const from = filters.timeFrom ? minuteOf(filters.timeFrom) : null, to = filters.timeTo ? minuteOf(filters.timeTo) : null;
+    if (from !== null && to !== null) return from <= to ? at >= from && at <= to : at >= from || at <= to;
+    return (from === null || at >= from) && (to === null || at <= to);
+}
+for (const [id, key] of [['searchText', 'q'], ['dateFrom', 'dateFrom'], ['dateTo', 'dateTo'], ['timeFrom', 'timeFrom'], ['timeTo', 'timeTo']])
+    $(id).addEventListener('input', e => { filters[key] = e.target.value; render() });
+$('clearFilters').onclick = () => { for (const k in filters) filters[k] = ''; for (const id of ['searchText', 'dateFrom', 'dateTo', 'timeFrom', 'timeTo']) $(id).value = ''; render() };
+$('toggleTimeline').onclick = () => { timelineOn = !timelineOn; timelineKey = ''; render() };
+
+// ---- Timeline per camera: one track per camera, one marker per clip, placed by its start time -------------------------
+const markerClass = j => isDropped(j) ? 'dropped' : isFlagged(j) ? 'flagged' : j.status;
+function renderTimeline(jobs) {
+    $('timelinePanel').hidden = !timelineOn; $('toggleTimeline').setAttribute('aria-pressed', String(timelineOn));
+    if (!timelineOn) return;
+    const key = JSON.stringify([selected, jobs.map(j => [j.id, j.status, j.suspicious, j.weapon, j.reviewState, j.segmentStart])]);
+    if (key === timelineKey) return; timelineKey = key;
+    const groups = new Map();
+    for (const j of jobs) { const name = j.cameraName || ''; if (!groups.has(name)) groups.set(name, []); groups.get(name).push(j) }
+    $('timelineSummary').textContent = `${jobs.length} video${jobs.length === 1 ? '' : 's'} · ${groups.size} camera${groups.size === 1 ? '' : 's'}`;
+    if (!jobs.length) { $('timelineList').innerHTML = '<p class="tl-empty">No videos to show.</p>'; return }
+    const times = jobs.map(j => jobTime(j).getTime()), min = Math.min(...times), max = Math.max(...times), span = max - min || 1;
+    const fmt = ms => new Date(ms).toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+    const rows = [...groups].sort(([a], [b]) => !a - !b || a.localeCompare(b)).map(([name, list]) => `<div class="tl-row"><div class="tl-name" title="${escapeHtml(name || 'Uploads (no camera)')}">${escapeHtml(name || 'Uploads (no camera)')}<small>${list.length}</small></div><div class="tl-track">${list.map(j => {
+        const t = jobTime(j).getTime(), left = (t - min) / span * 100, width = (j.duration || 0) * 1000 / span * 100;
+        return `<button type="button" class="tl-mark ${markerClass(j)}${selected === j.id ? ' selected' : ''}${j.reviewState ? ' reviewed' : ''}" style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%" data-select="${j.id}" title="${escapeHtml(fmt(t) + ' · ' + (j.description ? j.description.slice(0, 120) : j.status))}" aria-label="${escapeHtml(j.name + ', ' + fmt(t))}"></button>`
+    }).join('')}</div></div>`).join('');
+    $('timelineList').innerHTML = rows + `<div class="tl-axis"><span></span><div class="tl-ticks">${[0, .25, .5, .75, 1].map(f => `<span>${escapeHtml(fmt(min + span * f))}</span>`).join('')}</div></div>`;
+}
+
+// ---- Keyboard review: J/K move between videos; C/F (flagged) or M/N (not flagged) set the verdict --------------------
+const VERDICT_KEY = { c: 'confirmed', f: 'false_alarm', m: 'missed', n: 'normal' };
+const KEY_OF = Object.fromEntries(Object.entries(VERDICT_KEY).map(([k, v]) => [v, k.toUpperCase()]));
+async function setReview(job, value) {
+    const next = job.reviewState === value ? null : value;   // pressing the active verdict clears it
+    try { await api(`/api/videos/${job.id}/review`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ state: next }) }); await refresh(); return next } catch (err) { toast(err.message) }
+}
+function selectJob(id) { selected = id; render(); $('queue').querySelector('.queue-item.selected')?.scrollIntoView({ block: 'nearest' }) }
+document.addEventListener('keydown', async e => {
+    if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented || e.repeat) return;
+    if ((e.target instanceof Element && e.target.closest('input:not([type=checkbox]):not([type=radio]), textarea, select, [contenteditable]')) || document.querySelector('dialog[open]')) return;
+    const key = e.key.toLowerCase(), list = state.jobs.filter(isVisible), at = list.findIndex(j => j.id === selected);
+    if (key === 'j' || key === 'k') {
+        if (!list.length) return;
+        e.preventDefault(); selectJob(list[Math.min(list.length - 1, Math.max(0, at + (key === 'j' ? 1 : -1)))].id); return
+    }
+    const value = VERDICT_KEY[key], job = list[at];
+    if (!value || !job || job.status !== 'completed' || !REVIEW_FOR[isFlagged(job) ? 'flagged' : 'unflagged'].includes(value)) return;
+    e.preventDefault();
+    if (await setReview(job, value) === value && list[at + 1]) selectJob(list[at + 1].id);   // verdict set: move on to the next video
+});

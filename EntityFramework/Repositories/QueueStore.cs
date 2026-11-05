@@ -41,8 +41,11 @@ public sealed class QueueStore : IQueueRepository
     }
     private DateTime lastSaveWarning = DateTime.MinValue;
 
+    public event Action? Changed;
+
     private void Persist()
     {
+        Changed?.Invoke();
         var temp = Path.Combine(root, "state.tmp");
         var target = Path.Combine(root, "state.json");
         var json = JsonSerializer.Serialize(new StoredState(settings, items) { LinkedFolder = linkedFolder }, Json);
@@ -119,7 +122,7 @@ public sealed class QueueStore : IQueueRepository
             settings = value; Persist();
         }
     }
-    public void SetRunning(bool value) { lock (gate) running = value; }
+    public void SetRunning(bool value) { lock (gate) { running = value; Changed?.Invoke(); } }
     public (VideoJob Job, ModelSettings Settings)? Take()
     {
         lock (gate)
@@ -165,7 +168,7 @@ public sealed class QueueStore : IQueueRepository
             foreach (var id in doomed)
             {
                 try { var dir = Folder(id); if (Directory.Exists(dir)) Directory.Delete(dir, true); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { } 
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
             }
             return (doomed.Count, wanted.Count - doomed.Count);
         }

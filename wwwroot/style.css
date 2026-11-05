@@ -2867,3 +2867,196 @@ main {
         white-space: normal;
         overflow-wrap: anywhere;
     }
+
+/* search and date/hour filters */
+.queue-search {
+    display: grid;
+    gap: 8px;
+    margin: 12px 0;
+}
+
+    .queue-search input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 8px 10px;
+        font-size: 12px;
+        border: 1px solid #dce5ec;
+        border-radius: 9px;
+        background: white;
+        color: var(--ink);
+    }
+
+.queue-range {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+    .queue-range label {
+        display: grid;
+        gap: 3px;
+        font-size: 10px;
+        color: var(--muted);
+    }
+
+.queue-search-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+    .queue-search-actions button {
+        font-size: 11px;
+        padding: 6px 10px;
+    }
+
+        .queue-search-actions button[aria-pressed="true"], .queue-search-actions button[aria-pressed="true"]:hover:not(:disabled) {
+            background: var(--blue);
+            border-color: var(--blue);
+            color: white;
+        }
+
+/* timeline per camera */
+#timelineList {
+    display: grid;
+    gap: 8px;
+    overflow-x: auto;
+}
+
+.tl-row, .tl-axis {
+    display: grid;
+    grid-template-columns: 150px minmax(0, 1fr);
+    gap: 12px;
+    align-items: center;
+    min-width: 480px;
+}
+
+.tl-name {
+    font-size: 12px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+    .tl-name small {
+        color: var(--muted);
+        font-weight: 400;
+        margin-left: 6px;
+    }
+
+.tl-track {
+    position: relative;
+    height: 30px;
+    margin-right: 6px;
+    background: var(--card, #f5f8fb);
+    border-radius: 8px;
+}
+
+.tl-mark {
+    --c: #9db0bf;
+    position: absolute;
+    top: 4px;
+    bottom: 10px;
+    min-width: 5px;
+    padding: 0;
+    border: 0;
+    border-radius: 3px;
+    background: var(--c);
+    box-shadow: none;
+}
+
+    .tl-mark:hover:not(:disabled) {
+        background: var(--c);
+        filter: brightness(.88);
+        box-shadow: none;
+    }
+
+    .tl-mark.completed {
+        --c: #7f9a1c;
+    }
+
+    .tl-mark.flagged {
+        --c: var(--red);
+    }
+
+    .tl-mark.processing {
+        --c: var(--blue);
+    }
+
+    .tl-mark.failed, .tl-mark.cancelled, .tl-mark.dropped {
+        --c: #c9a25a;
+    }
+
+    .tl-mark.selected {
+        outline: 2px solid var(--ink);
+        outline-offset: 1px;
+        z-index: 2;
+    }
+
+    .tl-mark.reviewed::after {
+        content: "";
+        position: absolute;
+        left: 50%;
+        bottom: -6px;
+        width: 4px;
+        height: 4px;
+        margin-left: -2px;
+        border-radius: 50%;
+        background: var(--ink);
+    }
+
+.tl-ticks {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--muted);
+}
+
+.tl-empty {
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.tl-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    margin-top: 14px;
+    font-size: 11px;
+    color: var(--muted);
+}
+
+    .tl-legend i {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        margin-right: 5px;
+        border-radius: 3px;
+        background: var(--c);
+    }
+
+@media (max-width: 650px) {
+    .tl-row, .tl-axis {
+        grid-template-columns: 96px minmax(0, 1fr);
+    }
+}
+
+/* keyboard review hints */
+.review kbd {
+    font: inherit;
+    font-size: 10px;
+    margin-left: 4px;
+    padding: 0 5px;
+    border: 1px solid #c8d6e0;
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    background: #f5f8fb;
+    color: var(--muted);
+}
+
+.review-hint {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--muted);
+}

@@ -1,0 +1,78 @@
+[
+  {
+    "name": "baseline",
+    "checks": [
+      {
+        "name": "video selesai diproses (status completed)",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "video ditandai suspicious",
+        "ok": true,
+        "detail": "yes"
+      },
+      {
+        "name": "alert terkirim ke webhook tepat sekali",
+        "ok": true,
+        "detail": "jumlah=1"
+      },
+      {
+        "name": "jurnal alert kosong setelah terkirim",
+        "ok": true,
+        "detail": "[]"
+      },
+      {
+        "name": "job mencatat notifiedAt dan tanpa notifyError",
+        "ok": true,
+        "detail": "('2026-11-05T01:43:38.0580393+00:00', None)"
+      }
+    ],
+    "notes": [],
+    "error": null,
+    "seconds": 3.240324020385742
+  },
+  {
+    "name": "crash_retrying",
+    "checks": [
+      {
+        "name": "video selesai diproses (status completed)",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "alert masuk jurnal retry",
+        "ok": true,
+        "detail": "[{'key': '96c5993aa79c4adbbea82be9945d95f7', 'message': {'jobId': '0040f54c6a1e4149a04fa44e675128c1', 'cameraName': '(kamera tidak diketahui)', 'time': '2026-11-05T01:43:40.6272528+00:00', 'description': 'Seorang orang berjalan melintasi area dan berhenti di dekat pintu (data uji).', 'suspicious': True, 'weapon': True, 'reviewUrl': 'http://127.0.0.1:50439/#job=0040f54c6a1e4149a04fa44e675128c1', 'mergedCount': 0, 'kind': 'flag', 'urgency': None, 'summary': None, 'channels': ['webhook'], 'key': '79270c942b8342e1ab0784034d0e1287', 'isModelFlag': True}, 'coveredJobIds': ['0040f54c6a1e4149a04fa44e675128c1'], 'attempts': 1, 'created': '2026-11-05T01:43:41.2664691+00:00', 'nextTry': '2026-11-05T01:44:23.4243915+00:00'}]"
+      },
+      {
+        "name": "aplikasi hidup lagi setelah restart",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "alert tetap ada di jurnal setelah restart",
+        "ok": true,
+        "detail": "[{'key': '96c5993aa79c4adbbea82be9945d95f7', 'message': {'jobId': '0040f54c6a1e4149a04fa44e675128c1', 'cameraName': '(kamera tidak diketahui)', 'time': '2026-11-05T01:43:40.6272528+00:00', 'description': 'Seorang orang berjalan melintasi area dan berhenti di dekat pintu (data uji).', 'suspicious': True, 'weapon': True, 'reviewUrl': 'http://127.0.0.1:50439/#job=0040f54c6a1e4149a04fa44e675128c1', 'mergedCount': 0, 'kind': 'flag', 'urgency': None, 'summary': None, 'channels': ['webhook'], 'key': '79270c942b8342e1ab0784034d0e1287', 'isModelFlag': True}, 'coveredJobIds': ['0040f54c6a1e4149a04fa44e675128c1'], 'attempts': 1, 'created': '2026-11-05T01:43:41.2664691+00:00', 'nextTry': '2026-11-05T01:44:23.4243915+00:00'}]"
+      },
+      {
+        "name": "alert terkirim setelah restart dan webhook pulih",
+        "ok": true,
+        "detail": "30 detik"
+      },
+      {
+        "name": "terkirim tepat sekali",
+        "ok": true,
+        "detail": "1"
+      },
+      {
+        "name": "jurnal kosong",
+        "ok": true,
+        "detail": "[]"
+      }
+    ],
+    "notes": [],
+    "error": null,
+    "seconds": 58.89964056015015
+  }
+]

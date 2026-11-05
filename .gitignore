@@ -46,3 +46,8 @@ eval/runs/qwen4b_instruct_batch/
 eval/runs/**/attempts.jsonl
 eval/runs/**/frames/
 eval/runs/**/*.tmp
+
+# fault injection runs: only fault_report.md and fault_results.json are committed
+eval/runs/**/app/
+eval/runs/**/scenarios/
+eval/runs/**/klip-uji.mp4

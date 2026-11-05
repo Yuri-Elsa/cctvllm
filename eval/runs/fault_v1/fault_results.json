@@ -1,0 +1,541 @@
+[
+  {
+    "name": "baseline",
+    "checks": [
+      {
+        "name": "video selesai diproses (status completed)",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "video ditandai suspicious",
+        "ok": true,
+        "detail": "yes"
+      },
+      {
+        "name": "alert terkirim ke webhook tepat sekali",
+        "ok": true,
+        "detail": "jumlah=1"
+      },
+      {
+        "name": "jurnal alert kosong setelah terkirim",
+        "ok": true,
+        "detail": "[]"
+      },
+      {
+        "name": "job mencatat notifiedAt dan tanpa notifyError",
+        "ok": true,
+        "detail": "('2026-11-05T01:20:42.7817851+00:00', None)"
+      }
+    ],
+    "notes": [],
+    "error": null,
+    "seconds": 3.3616788387298584
+  },
+  {
+    "name": "model_down",
+    "checks": [
+      {
+        "name": "ada video yang mulai diproses",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "tidak ada video yang macet di 'processing' / antrean berhenti",
+        "ok": true,
+        "detail": "{'4bd6b8413a1a44d5bbc0e4878a77e57a': 'failed', '90e836ee50694bae916c01a30f4b0ed5': 'failed', '679400bfb7154407931fed89f33dd144': 'failed'}"
+      },
+      {
+        "name": "semua video yang terdampak berstatus failed dengan pesan error",
+        "ok": true,
+        "detail": "['Cannot reach the model server. Check the connection in Settings.', 'Cannot reach the model server. Check the connection in Settings.', 'Cannot reach the model server. Check the connection in Settings.']"
+      },
+      {
+        "name": "aplikasi tetap hidup",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "minimal satu alert 'analisis gagal' terkirim (video dari folder terhubung)",
+        "ok": true,
+        "detail": "1"
+      },
+      {
+        "name": "tidak ada alert 'suspicious' palsu saat model mati",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "semua video selesai setelah model pulih",
+        "ok": true,
+        "detail": "{'4bd6b8': 'completed', '90e836': 'completed', '679400': 'completed'}"
+      },
+      {
+        "name": "setiap video bertanda menghasilkan tepat satu alert",
+        "ok": true,
+        "detail": "{'4bd6b8': 1, '90e836': 1, '679400': 1}"
+      }
+    ],
+    "notes": [
+      "alert 'analisis gagal' hanya dibuat untuk video dari ingest otomatis (folder terhubung/RTSP); upload manual tidak memicunya (sengaja, lihat DescriptionWorker.cs)"
+    ],
+    "error": null,
+    "seconds": 14.351238012313843
+  },
+  {
+    "name": "model_bad",
+    "checks": [
+      {
+        "name": "[garbage] job berakhir failed (tidak menggantung), error terisi",
+        "ok": true,
+        "detail": "('failed', 'The model returned incomplete or invalid JSON. Its raw response was saved; retry this video.')"
+      },
+      {
+        "name": "[garbage] tidak ada alert 'suspicious' palsu",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "[garbage] aplikasi tetap hidup",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "[http500] job berakhir failed (tidak menggantung), error terisi",
+        "ok": true,
+        "detail": "('failed', 'Model server returned 500. mock: kegagalan yang disengaja')"
+      },
+      {
+        "name": "[http500] tidak ada alert 'suspicious' palsu",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "[http500] aplikasi tetap hidup",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "[truncated] job berakhir failed (tidak menggantung), error terisi",
+        "ok": true,
+        "detail": "('failed', 'The model reached its output limit before finishing. No flags were assumed; retry this video.')"
+      },
+      {
+        "name": "[truncated] tidak ada alert 'suspicious' palsu",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "[truncated] aplikasi tetap hidup",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "[drop] job berakhir failed (tidak menggantung), error terisi",
+        "ok": true,
+        "detail": "('failed', 'Cannot reach the model server. Check the connection in Settings.')"
+      },
+      {
+        "name": "[drop] tidak ada alert 'suspicious' palsu",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "[drop] aplikasi tetap hidup",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "alert 'analisis gagal' terkirim",
+        "ok": true,
+        "detail": "1"
+      },
+      {
+        "name": "video selesai setelah model pulih",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "alert terkirim tepat sekali setelah pulih",
+        "ok": true,
+        "detail": "1"
+      }
+    ],
+    "notes": [],
+    "error": null,
+    "seconds": 10.866589069366455
+  },
+  {
+    "name": "agent_faults",
+    "checks": [
+      {
+        "name": "[agen normal] video selesai",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "[agen normal] webhook menerima alert tepat sekali",
+        "ok": true,
+        "detail": "1"
+      },
+      {
+        "name": "[agen normal] agen memutuskan send_email",
+        "ok": true,
+        "detail": "{'action': 'send_email', 'urgency': 'critical', 'summary': 'Kamera uji: aktivitas tertandai (data uji).', 'reason': 'uji', 'fallbackUsed': False, 'error': None, 'guardOverride': False, 'extraFramePasses': 0, 'decidedAt': '2026-11-05T01:21:10.9794326+00:00'}"
+      },
+      {
+        "name": "[agen gagal 500 (harus fallback ke semua kanal)] video selesai",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "[agen gagal 500 (harus fallback ke semua kanal)] webhook menerima alert tepat sekali",
+        "ok": true,
+        "detail": "1"
+      },
+      {
+        "name": "[agen gagal 500 (harus fallback ke semua kanal)] log agen mencatat fallbackUsed",
+        "ok": true,
+        "detail": "{'action': 'none', 'urgency': None, 'summary': None, 'reason': None, 'fallbackUsed': True, 'error': 'Model server returned 500. mock: kegagalan yang disengaja', 'guardOverride': False, 'extraFramePasses': 0, 'decidedAt': '2026-11-05T01:21:11.9631346+00:00'}"
+      },
+      {
+        "name": "[agen memilih ignore padahal weapon=yes (harus dikoreksi guard)] video selesai",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "[agen memilih ignore padahal weapon=yes (harus dikoreksi guard)] webhook menerima alert tepat sekali",
+        "ok": true,
+        "detail": "1"
+      },
+      {
+        "name": "[agen memilih ignore padahal weapon=yes (harus dikoreksi guard)] guard mengoreksi: guardOverride=true",
+        "ok": true,
+        "detail": "{'action': 'send_email', 'urgency': 'critical', 'summary': 'Kamera uji: aktivitas tertandai (data uji).', 'reason': 'Dikembalikan oleh aturan pengaman: weapon=yes tidak boleh diabaikan. uji', 'fallbackUsed': False, 'error': None, 'guardOverride': True, 'extraFramePasses': 0, 'decidedAt': '2026-11-05T01:21:24.2638266+00:00'}"
+      },
+      {
+        "name": "[agen memilih ignore padahal weapon=yes (harus dikoreksi guard)] urgensi alert yang terkirim = critical",
+        "ok": true,
+        "detail": "critical"
+      },
+      {
+        "name": "kanal email yang gagal disimpan di jurnal untuk retry (hanya email)",
+        "ok": true,
+        "detail": "[('email',), ('email',), ('email',)]"
+      },
+      {
+        "name": "retry email tidak mengirim ulang ke webhook yang sudah menerima (tanpa duplikat)",
+        "ok": true,
+        "detail": "({'128f8774a9254446b1ddad5ef561c0ea': 1, '984f8947e9dc4598ab670d84c12d034f': 1, 'd7332c132ae240cebdf9cb8f0a37d843': 1}, {'128f8774a9254446b1ddad5ef561c0ea': 1, '984f8947e9dc4598ab670d84c12d034f': 1, 'd7332c132ae240cebdf9cb8f0a37d843': 1})"
+      },
+      {
+        "name": "aplikasi tetap hidup",
+        "ok": true,
+        "detail": ""
+      }
+    ],
+    "notes": [],
+    "error": null,
+    "seconds": 94.50561118125916
+  },
+  {
+    "name": "webhook_outage",
+    "checks": [
+      {
+        "name": "video selesai diproses (status completed)",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "alert masuk jurnal retry saat webhook tidak bisa dijangkau",
+        "ok": true,
+        "detail": "[{'key': '5711d38ec3a24f20ad30ef34feb1def9', 'message': {'jobId': 'e9cfc41e00784afcaea791214d0821b0', 'cameraName': '(kamera tidak diketahui)', 'time': '2026-11-05T01:22:45.065484+00:00', 'description': 'Seorang orang berjalan melintasi area dan berhenti di dekat pintu (data uji).', 'suspicious': True, 'weapon': True, 'reviewUrl': 'http://127.0.0.1:64373/#job=e9cfc41e00784afcaea791214d0821b0', 'mergedCount': 0, 'kind': 'flag', 'urgency': None, 'summary': None, 'channels': ['webhook'], 'key': '35fc6b4bbca649529a0d9ac6fc0dcabf', 'isModelFlag': True}, 'coveredJobIds': ['e9cfc41e00784afcaea791214d0821b0'], 'attempts': 1, 'created': '2026-11-05T01:22:45.7490669+00:00', 'nextTry': '2026-11-05T01:23:27.9193912+00:00'}]"
+      },
+      {
+        "name": "job mencatat notifyError",
+        "ok": true,
+        "detail": "webhook: HttpRequestException"
+      },
+      {
+        "name": "tidak ada pengiriman palsu yang tercatat berhasil",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "alert akhirnya terkirim setelah webhook pulih",
+        "ok": true,
+        "detail": "36 detik"
+      },
+      {
+        "name": "terkirim tepat sekali (tanpa duplikat)",
+        "ok": true,
+        "detail": "1"
+      },
+      {
+        "name": "jurnal kosong setelah terkirim",
+        "ok": true,
+        "detail": "[]"
+      },
+      {
+        "name": "notifiedAt terisi dan notifyError dibersihkan",
+        "ok": true,
+        "detail": "('2026-11-05T01:23:34.1585251+00:00', None)"
+      }
+    ],
+    "notes": [
+      "waktu pulih sampai terkirim: 36 detik"
+    ],
+    "error": null,
+    "seconds": 63.36664628982544
+  },
+  {
+    "name": "webhook_outage_500",
+    "checks": [
+      {
+        "name": "video selesai diproses (status completed)",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "alert masuk jurnal retry saat webhook tidak bisa dijangkau",
+        "ok": true,
+        "detail": "[{'key': '0c546fb750574b4d9bb08e64d5a3ea8e', 'message': {'jobId': 'c775b13bc89b4bfa82adcd3176ed535a', 'cameraName': '(kamera tidak diketahui)', 'time': '2026-11-05T01:23:48.7096846+00:00', 'description': 'Seorang orang berjalan melintasi area dan berhenti di dekat pintu (data uji).', 'suspicious': True, 'weapon': True, 'reviewUrl': 'http://127.0.0.1:60747/#job=c775b13bc89b4bfa82adcd3176ed535a', 'mergedCount': 0, 'kind': 'flag', 'urgency': None, 'summary': None, 'channels': ['webhook'], 'key': 'c8ebbeec1d1b494a8319945c30ff77c5', 'isModelFlag': True}, 'coveredJobIds': ['c775b13bc89b4bfa82adcd3176ed535a'], 'attempts': 1, 'created': '2026-11-05T01:23:49.3061523+00:00', 'nextTry': '2026-11-05T01:24:25.3638937+00:00'}]"
+      },
+      {
+        "name": "job mencatat notifyError",
+        "ok": true,
+        "detail": "webhook: HttpRequestException 500"
+      },
+      {
+        "name": "tidak ada pengiriman palsu yang tercatat berhasil",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "alert akhirnya terkirim setelah webhook pulih",
+        "ok": true,
+        "detail": "32 detik"
+      },
+      {
+        "name": "terkirim tepat sekali (tanpa duplikat)",
+        "ok": true,
+        "detail": "1"
+      },
+      {
+        "name": "jurnal kosong setelah terkirim",
+        "ok": true,
+        "detail": "[]"
+      },
+      {
+        "name": "notifiedAt terisi dan notifyError dibersihkan",
+        "ok": true,
+        "detail": "('2026-11-05T01:24:27.7038147+00:00', None)"
+      }
+    ],
+    "notes": [
+      "waktu pulih sampai terkirim: 32 detik"
+    ],
+    "error": null,
+    "seconds": 53.7896294593811
+  },
+  {
+    "name": "crash_retrying",
+    "checks": [
+      {
+        "name": "video selesai diproses (status completed)",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "alert masuk jurnal retry",
+        "ok": true,
+        "detail": "[{'key': '21925fd3b1ce4bb8a8c1a27f31de83ac', 'message': {'jobId': 'fbbf3bc130ea4acc981265200e9a0faa', 'cameraName': '(kamera tidak diketahui)', 'time': '2026-11-05T01:24:42.2246555+00:00', 'description': 'Seorang orang berjalan melintasi area dan berhenti di dekat pintu (data uji).', 'suspicious': True, 'weapon': True, 'reviewUrl': 'http://127.0.0.1:57341/#job=fbbf3bc130ea4acc981265200e9a0faa', 'mergedCount': 0, 'kind': 'flag', 'urgency': None, 'summary': None, 'channels': ['webhook'], 'key': '670efb965f434690994a2ed330e82527', 'isModelFlag': True}, 'coveredJobIds': ['fbbf3bc130ea4acc981265200e9a0faa'], 'attempts': 1, 'created': '2026-11-05T01:24:42.923666+00:00', 'nextTry': '2026-11-05T01:25:25.1288534+00:00'}]"
+      },
+      {
+        "name": "aplikasi hidup lagi setelah restart",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "alert tetap ada di jurnal setelah restart",
+        "ok": true,
+        "detail": "[{'key': '21925fd3b1ce4bb8a8c1a27f31de83ac', 'message': {'jobId': 'fbbf3bc130ea4acc981265200e9a0faa', 'cameraName': '(kamera tidak diketahui)', 'time': '2026-11-05T01:24:42.2246555+00:00', 'description': 'Seorang orang berjalan melintasi area dan berhenti di dekat pintu (data uji).', 'suspicious': True, 'weapon': True, 'reviewUrl': 'http://127.0.0.1:57341/#job=fbbf3bc130ea4acc981265200e9a0faa', 'mergedCount': 0, 'kind': 'flag', 'urgency': None, 'summary': None, 'channels': ['webhook'], 'key': '670efb965f434690994a2ed330e82527', 'isModelFlag': True}, 'coveredJobIds': ['fbbf3bc130ea4acc981265200e9a0faa'], 'attempts': 1, 'created': '2026-11-05T01:24:42.923666+00:00', 'nextTry': '2026-11-05T01:25:25.1288534+00:00'}]"
+      },
+      {
+        "name": "alert terkirim setelah restart dan webhook pulih",
+        "ok": true,
+        "detail": "30 detik"
+      },
+      {
+        "name": "terkirim tepat sekali",
+        "ok": true,
+        "detail": "1"
+      },
+      {
+        "name": "jurnal kosong",
+        "ok": true,
+        "detail": "[]"
+      }
+    ],
+    "notes": [],
+    "error": null,
+    "seconds": 58.37638473510742
+  },
+  {
+    "name": "crash_retrying_term",
+    "checks": [
+      {
+        "name": "video selesai diproses (status completed)",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "alert masuk jurnal retry",
+        "ok": true,
+        "detail": "[{'key': '1d6c877a681243b58ac7556c4289e115', 'message': {'jobId': 'bf6f4771056e43489161835594f0614a', 'cameraName': '(kamera tidak diketahui)', 'time': '2026-11-05T01:25:40.6034734+00:00', 'description': 'Seorang orang berjalan melintasi area dan berhenti di dekat pintu (data uji).', 'suspicious': True, 'weapon': True, 'reviewUrl': 'http://127.0.0.1:63874/#job=bf6f4771056e43489161835594f0614a', 'mergedCount': 0, 'kind': 'flag', 'urgency': None, 'summary': None, 'channels': ['webhook'], 'key': '4a0b27586f7c4bcc8c5150724397e2f8', 'isModelFlag': True}, 'coveredJobIds': ['bf6f4771056e43489161835594f0614a'], 'attempts': 1, 'created': '2026-11-05T01:25:41.2762901+00:00', 'nextTry': '2026-11-05T01:26:23.4647727+00:00'}]"
+      },
+      {
+        "name": "aplikasi hidup lagi setelah restart",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "alert tetap ada di jurnal setelah restart",
+        "ok": true,
+        "detail": "[{'key': '1d6c877a681243b58ac7556c4289e115', 'message': {'jobId': 'bf6f4771056e43489161835594f0614a', 'cameraName': '(kamera tidak diketahui)', 'time': '2026-11-05T01:25:40.6034734+00:00', 'description': 'Seorang orang berjalan melintasi area dan berhenti di dekat pintu (data uji).', 'suspicious': True, 'weapon': True, 'reviewUrl': 'http://127.0.0.1:63874/#job=bf6f4771056e43489161835594f0614a', 'mergedCount': 0, 'kind': 'flag', 'urgency': None, 'summary': None, 'channels': ['webhook'], 'key': '4a0b27586f7c4bcc8c5150724397e2f8', 'isModelFlag': True}, 'coveredJobIds': ['bf6f4771056e43489161835594f0614a'], 'attempts': 1, 'created': '2026-11-05T01:25:41.2762901+00:00', 'nextTry': '2026-11-05T01:26:23.4647727+00:00'}]"
+      },
+      {
+        "name": "alert terkirim setelah restart dan webhook pulih",
+        "ok": true,
+        "detail": "30 detik"
+      },
+      {
+        "name": "terkirim tepat sekali",
+        "ok": true,
+        "detail": "1"
+      },
+      {
+        "name": "jurnal kosong",
+        "ok": true,
+        "detail": "[]"
+      }
+    ],
+    "notes": [],
+    "error": null,
+    "seconds": 58.79391074180603
+  },
+  {
+    "name": "crash_waiting",
+    "checks": [
+      {
+        "name": "kedua video selesai",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "alert pertama terkirim langsung",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "alert kedua ditahan untuk digest dan tercatat di jurnal (status waiting)",
+        "ok": true,
+        "detail": "(['3f2d3be837c74377bb6eca3863f68262'], [{'key': 'ecd5cd3b1155423cbde923ba2d8fc6ff', 'message': {'jobId': '3f2d3be837c74377bb6eca3863f68262', 'cameraName': '(kamera tidak diketahui)', 'time': '2026-11-05T01:26:39.3817577+00:00', 'description': 'Seorang orang berjalan melintasi area dan berhenti di dekat pintu (data uji).', 'suspicious': True, 'weapon': False, 'reviewUrl': 'http://127.0.0.1:53134/#job=3f2d3be837c74377bb6eca3863f68262', 'mergedCount': 0, 'kind': 'flag', 'urgency': None, 'summary': None, 'channels': None, 'key': 'ecd5cd3b1155423cbde923ba2d8fc6ff', 'isModelFlag': True}, 'coveredJobIds': ['3f2d3be837c74377bb6eca3863f68262'], 'attempts': 0, 'created': '2026-11-05T01:26:40.2946035+00:00', 'nextTry': None}])"
+      },
+      {
+        "name": "aplikasi hidup lagi setelah restart",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "alert yang ditahan akhirnya terkirim setelah restart",
+        "ok": true,
+        "detail": "{'f51ddd': 1, '3f2d3b': 1}"
+      },
+      {
+        "name": "masing-masing video tepat satu alert (tanpa duplikat, tanpa hilang)",
+        "ok": true,
+        "detail": "{'f51ddd': 1, '3f2d3b': 1}"
+      }
+    ],
+    "notes": [],
+    "error": null,
+    "seconds": 9.656609535217285
+  },
+  {
+    "name": "crash_midjob",
+    "checks": [
+      {
+        "name": "video mulai diproses",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "video kembali ke 'queued' (tidak macet di processing)",
+        "ok": true,
+        "detail": "('queued', 'Queued after restart')"
+      },
+      {
+        "name": "antrean dalam keadaan berhenti setelah restart (sesuai README)",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "tidak ada alert terkirim sebelum video selesai",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "video selesai setelah antrean dijalankan lagi",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "alert terkirim tepat sekali",
+        "ok": true,
+        "detail": "1"
+      }
+    ],
+    "notes": [],
+    "error": null,
+    "seconds": 5.190451383590698
+  },
+  {
+    "name": "corrupt_files",
+    "checks": [
+      {
+        "name": "aplikasi tetap bisa start dengan state.json dan jurnal rusak",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "salinan state rusak disimpan untuk diperiksa",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "salinan jurnal rusak disimpan untuk diperiksa",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "antrean dimulai kosong",
+        "ok": true,
+        "detail": "[]"
+      },
+      {
+        "name": "pipeline berfungsi normal setelah pemulihan",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "alert terkirim tepat sekali",
+        "ok": true,
+        "detail": "1"
+      }
+    ],
+    "notes": [],
+    "error": null,
+    "seconds": 4.227805137634277
+  }
+]

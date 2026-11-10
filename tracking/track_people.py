@@ -108,6 +108,13 @@ def main():
     # detector, which decides presence itself and has no boxes to measure speed from).
     motion_only = bool(spec.get("motion_only", False))
     predict_floor = min(verify_low, LOG_FLOOR)
+    # Face blur: every frame written below is blurred first, using all boxes down to the log floor (a miss costs
+    # more than a needless blur), so no stored or model-bound frame carries a readable face. Motion is measured
+    # from the boxes, not the pixels, so it is unaffected.
+    blurrer = None
+    if spec.get("blur_faces") and not motion_only:
+        import face_blur
+        blurrer = face_blur.FaceBlurrer(faces=face_blur.FaceFinder(spec.get("face_model")))
     model = YOLO(args.weights)
     cap = cv2.VideoCapture(spec["video"])
     if not cap.isOpened():
@@ -151,6 +158,7 @@ def main():
                        for x1,y1,x2,y2 in (map(int,box) for box in kept_boxes)]
             matched = associate(previous, current,
                                 timestamp - previous_time if previous_time is not None else 0)
+            if blurrer: blurrer.blur(frame, all_boxes)
             raw_path = output / f"{sample:04d}-plain.png"
             if not motion_only and not cv2.imwrite(str(raw_path),frame): raise RuntimeError("Cannot save frame")
             people = []

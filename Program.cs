@@ -321,15 +321,26 @@ app.MapPost("/api/folder/refresh", (QueueStore s, ScanCoordinator scans, HttpCon
     return Results.Ok(new { importing = true });
 });
 app.MapGet("/api/folder/status", (ScanCoordinator scans) => scans.Status());
-app.MapGet("/api/videos/{id}/{asset}", (string id, string asset, QueueStore s, HttpContext http) => {
+app.MapGet("/api/videos/{id}/{asset}", (string id, string asset, string? original, QueueStore s, HttpContext http) => {
     var job = s.Get(id);
     if (asset is not ("video" or "poster.jpg")) return Results.NotFound();
-    var path = asset == "video" ? s.VideoPath(job) : Path.Combine(s.Folder(job.Id), asset);
+    // Face blur: everybody gets the blurred copy. The unblurred original is an administrator's explicit, logged request.
+    var wantsOriginal = asset == "video" && original == "1";
+    if (wantsOriginal) { Need(http, "admin"); Log(http, "original_video_viewed", id, job.Name); }
+    var choice = FaceBlur.Choose(job, wantsOriginal);
+    if (choice == FaceBlur.ClipChoice.Withheld)
+        throw new UserError("The face-blurred copy of this video is not available" +
+            (string.IsNullOrEmpty(job.BlurError) ? "" : " (" + job.BlurError + ")") + ". An administrator can still open the original.", 409);
+    var blurred = choice == FaceBlur.ClipChoice.Blurred && asset == "video";
+    var path = blurred ? FaceBlur.ClipPath(s.Folder(job.Id))
+        : asset == "video" ? s.VideoPath(job) : Path.Combine(s.Folder(job.Id), asset);
     if (!File.Exists(path))
-        throw new UserError(asset == "video" && job.SourcePath is not null
+        throw new UserError(blurred ? "The face-blurred copy of this video is missing."
+            : asset == "video" && job.SourcePath is not null
             ? "This video is no longer at its original path in the linked folder." : "File not found.", 404);
     var type = "image/jpeg";
-    if (asset == "video")
+    if (blurred) type = "video/mp4";
+    else if (asset == "video")
     {
         // The name comes from the uploader, so never let it pick html/svg/js: only video/* is served.
         if (!new FileExtensionContentTypeProvider().TryGetContentType(job.Name, out type) || !type.StartsWith("video/", StringComparison.Ordinal))

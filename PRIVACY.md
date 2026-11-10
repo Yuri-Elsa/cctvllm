@@ -11,7 +11,8 @@ adviser or data protection officer.
 | --- | --- | --- |
 | Video clips from cameras (RTSP) | RTSP folder | Empty clips `CCTV_KEEP_EMPTY_MINUTES` (10), unflagged `CCTV_KEEP_HOURS` (24), flagged `CCTV_KEEP_FLAGGED_DAYS` (30) |
 | Uploaded and linked-folder videos | data folder / your folder | Never deleted by the app. Delete them yourself |
-| Descriptions, flags, verdicts, posters, frames | `state.json`, data folder | As long as the video record exists |
+| Descriptions, flags, verdicts, posters, frames | `state.json`, data folder | As long as the video record exists. Frames and posters are face-blurred when **Blur faces** is on (the default) |
+| Face-blurred copy of each video with people (`video-blurred.mp4`) | job folder in the data folder | Removed with the video record |
 | Alerts (webhook, email, WhatsApp) | sent to those services | Outside the app. Alerts contain a description and a review link, not the clip |
 | Audit log (user, address, action) | `audit.jsonl` | Rotated at 10 MB. Not deleted by the app |
 | Accounts | `users.json` | Until you remove them. Passwords are stored as PBKDF2 hashes |
@@ -22,12 +23,15 @@ adviser or data protection officer.
 - Audit: `GET /api/audit` (admin) shows who changed a verdict or a setting, deleted a video, linked a folder, or signed in.
 - Sessions: `GET /api/sessions` and `POST /api/sessions/{id}/revoke` (admin) end a sign-in from the server.
 - Retention: the variables above. Lower them to keep less.
+- Face blur: **Blur faces** (Settings, on by default) pixelates faces in stored frames and posters, and reviewers play a blurred copy of each video. Only an admin can open the original, and each such request is audited. If the blurred copy cannot be made the video is withheld, not shown. See the README section "Face blur".
 - Model: the description is produced by a local model (Ollama). No video leaves the machine unless you point the model
   endpoint or a notifier at an outside service.
 
 ## Not done yet
 
-- Face blur on stored clips or in alerts. Today clips are stored and played as recorded.
+- The original video file is kept as recorded: face blur only changes what reviewers see and what is stored as frames. Delete the original if you do not need it.
+- Face blur is a best effort. A person the detectors miss (very small, heavily occluded, in the dark) is not blurred. It is not applied to videos processed before it existed, or before they are processed, and the poster of an unprocessed video is a small thumbnail of the first frame.
+- Alerts never contain a clip or an image, so there is nothing in them to blur.
 - Deleting a person's data on request: there is no per-person search. Deleting the video record and file is the only tool.
 - Purging old audit files: rotated `audit-*.jsonl` files stay until you delete them.
 

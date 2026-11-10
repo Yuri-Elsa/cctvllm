@@ -15,4 +15,7 @@ public sealed record ModelSettings(string Mode = "local", string Endpoint = "htt
     public bool SceneMode { get; init; }
     public int SceneFrames { get; init; } = 4;
     public bool SeparateClassification { get; init; }
+    // Pixelate faces in every stored frame and in the copy of the video that reviewers watch. On by default:
+    // the person detector decides what to blur, so it costs a second pass over each video that contains people.
+    public bool BlurFaces { get; init; } = true;
 }

@@ -44,7 +44,8 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
             {
                 var token = current!.Token;
                 var result = await Local(job, config, token);
-                CommitResult(job.Id, config, result, watch.Elapsed.TotalSeconds, token);
+                var blur = await BlurClip(job, config, result, token);
+                CommitResult(job.Id, config, result, watch.Elapsed.TotalSeconds, token, blur);
                 var finished = store.Get(job.Id);
                 if (finished.CameraName is not null && finished.SegmentStart is { } start)
                 {
@@ -82,7 +83,35 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
             }
         }
     }
-    private void CommitResult(string id, ModelSettings config, DescriptionResult result, double elapsedSeconds, CancellationToken token)
+    private readonly record struct BlurOutcome(bool Requested, bool Done, string? Error);
+
+    // Writes the face-blurred copy of the video that reviewers watch, and re-cuts the poster from it. Nothing to blur when
+    // nobody was found. A failure does not fail the job (the analysis is still good), but it is recorded, and the video is
+    // then withheld from everyone except an administrator rather than shown unblurred.
+    private async Task<BlurOutcome> BlurClip(VideoJob job, ModelSettings config, DescriptionResult result, CancellationToken ct)
+    {
+        if (!config.BlurFaces) return new(false, false, null);
+        if (result.NoPeople) return new(true, false, null);
+        try
+        {
+            store.Update(job.Id, j => j with { Stage = "Blurring faces" });
+            var folder = store.Folder(job.Id);
+            var source = store.VideoPath(job);
+            if (!File.Exists(source)) throw new UserError("This video is no longer at its original path in the linked folder.", 404);
+            await FaceBlur.Clip(env.ContentRootPath, folder, videos.FfmpegPath, source, job.Fps, ct);
+            await videos.Poster(FaceBlur.ClipPath(folder), Path.Combine(folder, "poster.jpg"), ct);
+            return new(true, true, null);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Face blur failed for {Video}", job.Name);
+            return new(true, false, ex.Message.Length > 300 ? ex.Message[..300] : ex.Message);
+        }
+    }
+
+    private void CommitResult(string id, ModelSettings config, DescriptionResult result, double elapsedSeconds, CancellationToken token,
+        BlurOutcome? blur = null)
     {
         lock (gate)
         {
@@ -102,7 +131,11 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
                 PersonLabels = config.PersonLabels,
                 Elapsed = Math.Round(elapsedSeconds, 1),
                 NoPeople = result.NoPeople,
-                Screening = ScreeningFor(config, result)
+                Screening = ScreeningFor(config, result),
+                // A re-analysis passes no outcome and keeps what the first run recorded.
+                BlurFaces = blur?.Requested ?? j.BlurFaces,
+                FacesBlurred = blur?.Done ?? j.FacesBlurred,
+                BlurError = blur is null ? j.BlurError : blur.Value.Error
             });
         }
     }
@@ -169,7 +202,7 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
                 env.ContentRootPath, stage, ct),
             "hybrid" => await HybridPersonDetector.Run(clients, job, store.VideoPath(job), store.Folder(job.Id), config, modelGap,
                 env.ContentRootPath, stage, ct),
-            _ => await PersonTracking.Run(env.ContentRootPath, store.Folder(job.Id), store.VideoPath(job), job.Fps, config.PersonThreshold, modelGap, ct)
+            _ => await PersonTracking.Run(env.ContentRootPath, store.Folder(job.Id), store.VideoPath(job), job.Fps, config.PersonThreshold, modelGap, ct, config.BlurFaces)
         };
         var timestamps = tracked.Timestamps;
         store.Update(job.Id, j => j with { Timestamps = timestamps });
@@ -215,6 +248,8 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
         var count = Math.Clamp(config.SceneFrames, 1, 8);
         var interval = Math.Max(modelGap, job.Duration / count);
         var sampled = await videos.SampleFrames(videoPath, store.Folder(job.Id), interval, ct);
+        // Every sampled frame stays on disk, not only the ones picked below, so all of them are blurred.
+        if (config.BlurFaces) await FaceBlur.Images(env.ContentRootPath, store.Folder(job.Id), sampled.Paths, ct);
         var (paths, times) = PickEvenly(sampled.Paths, sampled.Timestamps, count);
         store.Update(job.Id, j => j with { Timestamps = times });
         var result = (await DescribeBatches(job, config, paths, times, null, null, ct, scene: true)) with

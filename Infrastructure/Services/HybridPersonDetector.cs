@@ -8,7 +8,7 @@ public static class HybridPersonDetector
         double modelGap, string root, Action<string> stage, CancellationToken ct)
     {
         var low = Math.Min(config.PersonVerifyLow, config.PersonThreshold);
-        var tracked = await PersonTracking.Track(root, folder, videoPath, job.Fps, config.PersonThreshold, modelGap, low, false, ct);
+        var tracked = await PersonTracking.Track(root, folder, videoPath, job.Fps, config.PersonThreshold, modelGap, low, false, ct, config.BlurFaces);
 
         var pending = tracked.Frames.Where(f => f.Uncertain).ToArray();
         var verdicts = new Dictionary<double, bool>();

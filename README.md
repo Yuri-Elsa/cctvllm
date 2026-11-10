@@ -163,6 +163,7 @@ Open **http://127.0.0.1:8766**. The compose file runs the app and Ollama togethe
 | Scene mode frames     | Frames per clip in scene mode, 1–8 (default 4) |
 | Parallel LLM requests | How many frames the LLM and Hybrid detectors send at once, 1–8 (default 2). Ollama only runs them in parallel if `OLLAMA_NUM_PARALLEL` allows it |
 | Suspicious threshold  | Cut-off for the `yes` probability, 0–1 (default 0.5)                                                    |
+| Blur faces            | On by default. Pixelates faces in every stored frame and in the video reviewers watch (see [Face blur](#face-blur)) |
 | Notification agent    | Let the model decide channel and urgency (Ollama mode only)                                             |
 | Batch processing      | Up to 10 frames per request on stronger hardware                                                        |
 | Flag activity         | Your own definition of what to flag (max 4,000 characters). It replaces the default suspicious criteria |
@@ -380,6 +381,24 @@ Applies **only to files in the RTSP folder**. Uploaded videos and files in a lin
 5. Files in the RTSP folder that no record points to are removed after `CCTV_KEEP_ORPHAN_MINUTES`.
 6. While the folder is over `CCTV_MAX_DISK_GB`, the oldest unflagged segments are removed first.
 
+## Face blur
+
+**Blur faces** (Settings, on by default) pixelates faces before anything is stored or shown:
+
+- Every frame saved for the model and the review page, plain and labelled alike. In LLM mode and Scene mode the sampled frames are blurred before the model sees them.
+- A blurred copy of each video that contains people, `video-blurred.mp4` in the job's folder. This is what the review page plays; its poster is cut from it. It is H.264 without audio, written by `tracking/face_blur.py` through ffmpeg.
+
+What gets blurred is the union of two things: the head area (the top ~22 % of the box) of every person YOLO finds, down to a confidence of 0.05, and every face found by the YuNet face detector (`tracking/face_detection_yunet_2023mar.onnx`, MIT licence, bundled). The head area covers faces the face detector misses; the face detector covers people YOLO misses. In the video, people are detected about 5 times a second and the head boxes are interpolated between detections, while faces are looked for on every frame. The cost is one more pass over each video that has people, roughly proportional to its length and frame rate, so time it on your hardware before turning it on for long clips.
+
+Who sees what:
+
+- Everyone gets the blurred copy. If a video was processed with blur on and the copy could not be made, the video is **withheld** (HTTP 409, the reason is shown on the job) rather than shown with faces.
+- Only an admin can open the unblurred original (`/api/videos/{id}/video?original=1`, linked as "original (admin)" on the job). Every such request is written to the audit log.
+- A video that has not been processed yet, one where nobody was found, and a job processed with blur off are played as recorded. Jobs processed before this feature existed are unchanged until you re-run them.
+- The original file is never altered or deleted. If it should not exist, delete the video record, or do not keep it (RTSP clips are removed by the retention settings).
+
+Set `CCTV_FACE_MODEL` to the path of another YuNet `.onnx` file to replace the bundled one. If the model file is missing, **System check** shows a warning and only the head areas are blurred. Tune the thresholds in the constants at the top of `tracking/face_blur.py`. Run `python tracking/test_face_blur.py` for the tests; `CCTV_TEST_FACE_IMAGE=photo.jpg` adds a check on a real face.
+
 ## Security and access
 
 - By default the app listens on `127.0.0.1` with no sign-in.
@@ -531,7 +550,7 @@ python eval/threshold_sweep.py --results eval/runs/gemma_split/results.jsonl --s
 - A large image input can exceed the model's context. The app reports the error instead of dropping frames. Lower `CCTV_MAX_FRAMES` or enable batching.
 - Description language is fixed to Indonesian by the prompt.
 - The queue is single-machine. Access is either one shared password (`CCTV_UI_PASSWORD`, always admin) or per-user accounts in `users.json` with the roles viewer, reviewer and admin. There is no OpenID Connect sign-in yet. Sessions are kept in memory, so restarting the app signs everybody out. State is still a single `state.json`; a database is not used yet.
-- Face blur is not implemented. See `PRIVACY.md` for what is stored and what is still open.
+- Face blur is a privacy aid, not a guarantee: it blurs the head of every person YOLO detects and every face the face detector finds, so a person nobody detects (very small, heavily occluded, in the dark) can stay visible. The unblurred original stays on disk. See [Face blur](#face-blur) and `PRIVACY.md`.
 - By default nothing reaches the model when person detection finds nobody, so a weapon lying on a table or a fire in an empty room is never checked. Turn on **Scene mode** (Settings) to send `Scene mode frames per clip` evenly spaced frames to the model in that case. It costs model calls for every empty clip, and its `suspicious` and `weapon` flags come from a different prompt than person clips. Unflagged scene-mode clips are still deleted after `CCTV_KEEP_EMPTY_MINUTES`.
 - Alert delivery is _at least once_ and bounded by `CCTV_ALERT_RETRY_HOURS`. If a channel stays down longer than that, the alert is dropped; it remains visible on the job in the UI.
 - The model client follows HTTP redirects. Only point it at a server you trust.

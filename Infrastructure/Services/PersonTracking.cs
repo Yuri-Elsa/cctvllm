@@ -32,9 +32,10 @@ public sealed class PersonTracking
     public static string WeightsPath(string root) => Path.Combine(root, "tracking/yolov8n.pt");
 
     public static async Task<Detection> Run(
-        string root, string folder, string videoPath, double fps, double conf, double modelMinGap, CancellationToken ct)
+        string root, string folder, string videoPath, double fps, double conf, double modelMinGap, CancellationToken ct,
+        bool blurFaces = false)
     {
-        var tracked = await Track(root, folder, videoPath, fps, conf, modelMinGap, null, false, ct);
+        var tracked = await Track(root, folder, videoPath, fps, conf, modelMinGap, null, false, ct, blurFaces);
         return Shape(tracked.Frames, tracked.Motion, tracked.Samples);
     }
 
@@ -44,7 +45,7 @@ public sealed class PersonTracking
 
     public static async Task<TrackingOutput> Track(
         string root, string folder, string videoPath, double fps, double conf, double modelMinGap,
-        double? verifyLow, bool motionOnly, CancellationToken ct)
+        double? verifyLow, bool motionOnly, CancellationToken ct, bool blurFaces = false)
     {
         var python = PythonPath(root);
         var weights = WeightsPath(root);
@@ -65,6 +66,12 @@ public sealed class PersonTracking
         };
         if (verifyLow is { } low) spec["verify_low"] = low;
         if (motionOnly) spec["motion_only"] = true;
+        // Every frame the script writes is face-blurred first, so no stored or model-bound frame shows a face.
+        if (blurFaces && !motionOnly)
+        {
+            spec["blur_faces"] = true;
+            if (FaceBlur.ModelOverride is { } faceModel) spec["face_model"] = faceModel;
+        }
         await File.WriteAllTextAsync(manifest, JsonSerializer.Serialize(spec), ct);
         using var process = new Process
         {

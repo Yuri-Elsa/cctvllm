@@ -15,6 +15,8 @@ public static class LlmPersonDetector
             throw new UserError("This video is no longer at its original path in the linked folder.", 404);
         var interval = Math.Max(modelGap, job.Duration / VideoTools.MaxFrames);
         var frames = await videos.SampleFrames(videoPath, folder, interval, ct);
+        // The frames stay on disk, so blur them before anything else reads them (the detector's own check included).
+        if (config.BlurFaces) { stage("Blurring faces"); await FaceBlur.Images(root, folder, frames.Paths, ct); }
         using var client = ModelCalls.CreateClient(clients);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var motionTask = MotionTimeline(root, folder, videoPath, job.Fps, linked.Token);

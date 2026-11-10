@@ -1182,6 +1182,10 @@ dialog .toggle-label input {
     padding: 2px 6px;
 }
 
+.video-meta .error {
+    color: #a61624;
+}
+
 .video-meta-sub {
     display: flex;
     flex-wrap: wrap;

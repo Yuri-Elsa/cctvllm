@@ -43,6 +43,7 @@ public sealed class Preflight(QueueStore store, VideoTools videos, RtspIngestSer
                 Guard("FFmpeg", () => CheckFfmpeg(ct)),
                 Guard("Python YOLO", () => CheckPython(ct)),
                 Guard("YOLO weights", () => Task.FromResult(CheckWeights())),
+                Guard("Face blur", () => Task.FromResult(CheckFaceBlur())),
                 Guard("Model server", () => CheckModel(ct)),
                 Guard("Data folder", () => Task.FromResult(CheckFolders())),
                 Guard("Notifiers", () => Task.FromResult(CheckNotifiers())),
@@ -103,6 +104,18 @@ public sealed class Preflight(QueueStore store, VideoTools videos, RtspIngestSer
         return File.Exists(weights)
             ? new PreflightCheck("YOLO weights", "ok", weights)
             : new PreflightCheck("YOLO weights", "fail", $"Missing {weights}. Person tracking cannot run without it.");
+    }
+
+    // Face blur always covers the head of every detected person. A face detector model adds to that, so a missing
+    // one is a warning, not a failure. When blur is off there is nothing to check.
+    private PreflightCheck CheckFaceBlur()
+    {
+        const string name = "Face blur";
+        if (!store.Settings.BlurFaces) return new PreflightCheck(name, "ok", "Off in Settings. Videos and frames are stored as recorded.");
+        var model = FaceBlur.ModelOverride ?? FaceBlur.BundledModel(env.ContentRootPath);
+        return File.Exists(model)
+            ? new PreflightCheck(name, "ok", "On: person heads plus the face detector " + Path.GetFileName(model))
+            : new PreflightCheck(name, "warn", $"On, but the face detector model is missing ({model}). Only the head of each detected person is blurred.");
     }
 
     private async Task<PreflightCheck> CheckModel(CancellationToken ct)

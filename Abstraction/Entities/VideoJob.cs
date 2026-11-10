@@ -31,6 +31,12 @@ public sealed record VideoJob
     // camera most segments are like this. RetentionService removes these first.
     public bool NoPeople { get; init; }
     public ScreeningLog? Screening { get; init; }
+    // Face blur. BlurFaces records the setting this job was processed under. FacesBlurred means a blurred copy of the
+    // video exists and is what reviewers get; when BlurFaces is set but FacesBlurred is not (the blur failed), the video
+    // is withheld from everyone except an administrator, who can still open the original. BlurError says why.
+    public bool BlurFaces { get; init; }
+    public bool FacesBlurred { get; init; }
+    public string? BlurError { get; init; }
 }
 // LinkedFolder is a property rather than a constructor parameter so a state.json written
 // before this feature existed still deserializes, with the folder simply absent.

@@ -74,9 +74,15 @@ public sealed class HealthMonitor(QueueStore store, IHttpClientFactory clients, 
                 try
                 {
                     var settings = store.Settings;
-                    var reachable = await ModelReachable(settings.Endpoint, stoppingToken);
+                    // Several model servers: the model counts as up while any one of them answers, and what each one
+                    // answered also tells the request router which servers to skip.
+                    var endpoints = ModelEndpoints.All(settings);
+                    var answers = await Task.WhenAll(endpoints.Select(e => ModelReachable(e, stoppingToken)));
+                    for (var i = 0; i < endpoints.Count; i++)
+                        if (answers[i]) ModelEndpoints.MarkUp(endpoints[i]); else ModelEndpoints.MarkDown(endpoints[i]);
+                    var reachable = answers.Any(a => a);
                     var queued = store.Jobs().Count(j => j.Status == "queued");
-                    foreach (var (kind, text) in tracker.Step(DateTimeOffset.UtcNow, reachable, queued, store.Running, settings.Endpoint))
+                    foreach (var (kind, text) in tracker.Step(DateTimeOffset.UtcNow, reachable, queued, store.Running, string.Join(", ", endpoints)))
                     {
                         logger.LogWarning("Health {Kind}: {Text}", kind, text);
                         notifications.EnqueueSystem(new NotificationPayload("", "Sistem", DateTimeOffset.UtcNow, text, false, false, notifications.ReviewUrl, 0, kind));

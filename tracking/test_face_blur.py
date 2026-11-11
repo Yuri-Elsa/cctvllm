@@ -78,8 +78,17 @@ finder = fb.FaceFinder(model_path="/nonexistent/model.onnx")
 check(finder.kind in ("haar", "none"), f"missing YuNet model falls back ({finder.kind})")
 check(isinstance(finder.find(noise()), list), "fallback finder still returns a list")
 
+# --- OpenCV 5 has no CascadeClassifier: no crash, the head blur still works
+_cascade = getattr(cv2, "CascadeClassifier", None)
+if _cascade is not None: del cv2.CascadeClassifier
+try:
+    bare = fb.FaceFinder(model_path="/nonexistent/model.onnx")
+    check(bare.kind == "none" and bare.find(noise()) == [], "without CascadeClassifier (OpenCV 5) the finder reports 'none' instead of crashing")
+finally:
+    if _cascade is not None: cv2.CascadeClassifier = _cascade
+
 # --- real YuNet loads and runs (blank image: nothing to find)
-if fb.DEFAULT_FACE_MODEL.is_file():
+if fb.DEFAULT_FACE_MODEL.is_file() and hasattr(cv2, "FaceDetectorYN"):
     real = fb.FaceFinder()
     check(real.kind == "yunet", "bundled YuNet model loads")
     check(real.find(np.full((240, 320, 3), 128, np.uint8)) == [], "YuNet finds no face in a blank image")

@@ -92,7 +92,8 @@ class FaceFinder:
             except cv2.error:
                 self._yunet = None
         data = getattr(getattr(cv2, "data", None), "haarcascades", None)
-        if data:
+        # OpenCV 5 no longer ships CascadeClassifier in the main package, so the Haar fallback only exists on 4.x.
+        if data and hasattr(cv2, "CascadeClassifier"):
             for name in ("haarcascade_frontalface_default.xml", "haarcascade_profileface.xml"):
                 cascade = cv2.CascadeClassifier(str(Path(data) / name))
                 if not cascade.empty():

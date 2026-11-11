@@ -2,7 +2,8 @@ public sealed class FlagNotifier(NotificationDispatcher dispatcher, INotificatio
 {
     private static bool IsFlagged(VideoJob job) => new[] { job }.Flagged().Any();
 
-    public async Task NotifyAsync(VideoJob finished, ModelSettings config, Func<string, CancellationToken, Task> reanalyze, CancellationToken ct)
+    public async Task NotifyAsync(VideoJob finished, ModelSettings config, Func<string, CancellationToken, Task> reanalyze, CancellationToken ct,
+        bool canReanalyze = true)
     {
         if (!IsFlagged(finished)) return;
         var channels = dispatcher.EnabledChannels();
@@ -14,7 +15,7 @@ public sealed class FlagNotifier(NotificationDispatcher dispatcher, INotificatio
         var passes = 0;
         try
         {
-            var context = new AgentContext(finished, config, channels, CanRequestMoreFrames: true);
+            var context = new AgentContext(finished, config, channels, CanRequestMoreFrames: canReanalyze);
             var decision = AgentPolicy.Guard(await agent.DecideAsync(context, ct), context);
             if (decision.Action == AgentAction.RequestMoreFrames)
             {

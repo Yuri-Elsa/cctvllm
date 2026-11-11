@@ -9,28 +9,46 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
     VideoTools videos, FlagNotifier flags) : BackgroundService
 {
     private readonly object gate = new();
-    private CancellationTokenSource? current;
-    private string? currentId;
+    // The videos being analysed on this machine, with the token that cancels each one.
+    private readonly Dictionary<string, CancellationTokenSource> running = [];
+
+    // How many videos this machine analyses at the same time (CCTV_WORKERS, 0 to 8, default 1). Each one runs its own person
+    // tracking and sends its own frames to the model, so more workers only help when the CPU and the model server have room.
+    // 0 leaves all the work to remote workers (see WorkerApi).
+    public static int LocalWorkers =>
+        int.TryParse(Environment.GetEnvironmentVariable("CCTV_WORKERS"), out var n) ? Math.Clamp(n, 0, 8) : 1;
 
     public void Cancel(string id)
     {
         lock (gate)
         {
             var job = store.Get(id);
-            if (currentId == id && current is not null) { current.Cancel(); return; }
+            if (running.TryGetValue(id, out var token)) { token.Cancel(); return; }
             if (job.Status == "queued") store.Update(id, j => j with { Status = "cancelled", Stage = "Cancelled" });
+            // On a remote worker: it learns about it at its next heartbeat and stops.
+            else if (job.Status == "processing" && job.Worker is not null)
+                store.Update(id, j => j with { Status = "cancelled", Stage = "Cancelled", Worker = null, LeaseUntil = null });
             else if (job.Status != "cancelled") throw new UserError("This video is no longer queued.", 409);
         }
     }
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+
+    protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
+        Task.WhenAll(Enumerable.Range(0, LocalWorkers).Select(_ => Task.Run(() => Loop(stoppingToken), stoppingToken)));
+
+    private async Task Loop(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
             (VideoJob Job, ModelSettings Settings)? next;
+            CancellationTokenSource? jobToken = null;
             lock (gate)
             {
                 next = store.Take();
-                if (next is not null) { currentId = next.Value.Job.Id; current = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken); }
+                if (next is not null)
+                {
+                    jobToken = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                    running[next.Value.Job.Id] = jobToken;
+                }
             }
             if (next is null)
             {
@@ -42,48 +60,83 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
             var watch = Stopwatch.StartNew();
             try
             {
-                var token = current!.Token;
-                var result = await Local(job, config, token);
-                var blur = await BlurClip(job, config, result, token);
-                CommitResult(job.Id, config, result, watch.Elapsed.TotalSeconds, token, blur);
-                var finished = store.Get(job.Id);
-                if (finished.CameraName is not null && finished.SegmentStart is { } start)
-                {
-                    var now = DateTimeOffset.UtcNow;
-                    var clipEnd = start.AddSeconds(finished.Duration);
-                    var process = watch.Elapsed.TotalSeconds;
-                    var wait = Math.Max(0, (now - finished.Created).TotalSeconds - process);
-                    logger.LogInformation("Latency {Camera} {Video}: total {Total:0}s after the clip ended (ingest {Ingest:0}s, wait {Wait:0}s, process {Process:0}s)",
-                        finished.CameraName, finished.Name, (now - clipEnd).TotalSeconds, (finished.Created - clipEnd).TotalSeconds, wait, process);
-                }
-                await flags.NotifyAsync(finished, config, (id, ct) => ReanalyzeWithMoreFrames(id, config, ct), stoppingToken);
+                var token = jobToken!.Token;
+                var (result, blur) = await Analyze(job, config, token);
+                await Finish(job, config, result, blur, watch.Elapsed.TotalSeconds, token, canReanalyze: true, watch.Elapsed.TotalSeconds);
             }
             // Only a real cancel (the user pressed Cancel, or the app is shutting down) lands here. A timeout
             // from HttpClient or ffmpeg is also an OperationCanceledException, but nobody asked for it, so it
             // falls through to the failure handler below and raises a failure alert.
-            catch (OperationCanceledException) when (current?.IsCancellationRequested == true)
+            catch (OperationCanceledException) when (jobToken!.IsCancellationRequested)
             {
                 store.Update(job.Id, j => j with { Status = stoppingToken.IsCancellationRequested ? "queued" : "cancelled", Stage = "Stopped" });
             }
             catch (Exception ex)
             {
                 logger.LogWarning(ex, "Description failed for {Video}", job.Name);
-                var message = ex is HttpRequestException ? "Cannot reach the model server. Check the connection in Settings."
-                    : ex is OperationCanceledException ? "Timed out while analysing this video (model server or ffmpeg took too long). Retry it."
-                    : ex.Message;
-                store.Update(job.Id, j => j with { Status = "failed", Stage = "Failed", Error = message.Length > 500 ? message[..500] : message });
-                // Alert only for automated ingestion (watched folder / RTSP). A failed manual upload is
-                // already visible to the person who just added it.
-                try { var failed = store.Get(job.Id); if (failed.SourcePath is not null) notifications.EnqueueFailure(failed); }
-                catch (UserError) { }   // the video was removed meanwhile
+                Fail(job.Id, Explain(ex));
             }
             finally
             {
-                lock (gate) { current?.Dispose(); current = null; currentId = null; }
+                lock (gate) { running.Remove(job.Id); jobToken!.Dispose(); }
             }
         }
     }
-    private readonly record struct BlurOutcome(bool Requested, bool Done, string? Error);
+
+    // The analysis proper: person tracking, the model, and the face-blurred copy. It writes progress to this machine's
+    // store, so a remote worker (which has a store of its own) calls it just like the local loops do.
+    public async Task<(DescriptionResult Result, BlurOutcome Blur)> Analyze(VideoJob job, ModelSettings config, CancellationToken ct)
+    {
+        var result = await Local(job, config, ct);
+        return (result, await BlurClip(job, config, result, ct));
+    }
+
+    // Everything after the analysis: record the result, log how long the clip waited, and notify. The local loops run it
+    // themselves; for a video analysed on a remote worker the coordinator runs it when the worker reports back.
+    // `processSeconds` is only for the latency log line.
+    public async Task Finish(VideoJob job, ModelSettings config, DescriptionResult result, BlurOutcome blur, double elapsedSeconds,
+        CancellationToken token, bool canReanalyze, double processSeconds)
+    {
+        CommitResult(job.Id, config, result, elapsedSeconds, token, blur);
+        await Announce(job.Id, config, canReanalyze, processSeconds, token);
+    }
+
+    // A remote worker's result. `worker` must still hold the video: the check and the write happen under the same lock that
+    // Cancel takes, so a video cancelled a moment ago is not brought back to life.
+    public void CommitFromWorker(string id, string worker, ModelSettings config, DescriptionResult result, double elapsedSeconds, BlurOutcome blur) =>
+        CommitResult(id, config, result, elapsedSeconds, CancellationToken.None, blur, worker);
+
+    public async Task Announce(string id, ModelSettings config, bool canReanalyze, double processSeconds, CancellationToken token)
+    {
+        var finished = store.Get(id);
+        if (finished.CameraName is not null && finished.SegmentStart is { } start)
+        {
+            var now = DateTimeOffset.UtcNow;
+            var clipEnd = start.AddSeconds(finished.Duration);
+            var wait = Math.Max(0, (now - finished.Created).TotalSeconds - processSeconds);
+            logger.LogInformation("Latency {Camera} {Video}: total {Total:0}s after the clip ended (ingest {Ingest:0}s, wait {Wait:0}s, process {Process:0}s)",
+                finished.CameraName, finished.Name, (now - clipEnd).TotalSeconds, (finished.Created - clipEnd).TotalSeconds, wait, processSeconds);
+        }
+        await flags.NotifyAsync(finished, config, (id, ct) => ReanalyzeWithMoreFrames(id, config, ct), token, canReanalyze);
+    }
+
+    // Records a failed video and, for automated ingestion, raises an alert.
+    public void Fail(string id, string message)
+    {
+        store.Update(id, j => j with
+        {
+            Status = "failed", Stage = "Failed", Error = message.Length > 500 ? message[..500] : message, Worker = null, LeaseUntil = null
+        });
+        // Alert only for automated ingestion (watched folder / RTSP). A failed manual upload is
+        // already visible to the person who just added it.
+        try { var failed = store.Get(id); if (failed.SourcePath is not null) notifications.EnqueueFailure(failed); }
+        catch (UserError) { }   // the video was removed meanwhile
+    }
+
+    public static string Explain(Exception ex) =>
+        ex is HttpRequestException ? "Cannot reach the model server. Check the connection in Settings."
+        : ex is OperationCanceledException ? "Timed out while analysing this video (model server or ffmpeg took too long). Retry it."
+        : ex.Message;
 
     // Writes the face-blurred copy of the video that reviewers watch, and re-cuts the poster from it. Nothing to blur when
     // nobody was found. A failure does not fail the job (the analysis is still good), but it is recorded, and the video is
@@ -111,11 +164,12 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
     }
 
     private void CommitResult(string id, ModelSettings config, DescriptionResult result, double elapsedSeconds, CancellationToken token,
-        BlurOutcome? blur = null)
+        BlurOutcome? blur = null, string? holder = null)
     {
         lock (gate)
         {
             token.ThrowIfCancellationRequested();
+            if (holder is not null) store.Holding(id, holder);
             store.Update(id, j => j with
             {
                 Status = "completed",
@@ -135,7 +189,9 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
                 // A re-analysis passes no outcome and keeps what the first run recorded.
                 BlurFaces = blur?.Requested ?? j.BlurFaces,
                 FacesBlurred = blur?.Done ?? j.FacesBlurred,
-                BlurError = blur is null ? j.BlurError : blur.Value.Error
+                BlurError = blur is null ? j.BlurError : blur.Value.Error,
+                Worker = null,
+                LeaseUntil = null
             });
         }
     }
@@ -705,9 +761,34 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
         };
     }
 
+    // Sends one request to the least busy model server that is up. If a server cannot be reached the request moves on to the
+    // next one (and the dead one is skipped for ModelEndpoints.Cooldown); with a single server the error is raised as before.
     internal static async Task<HttpResponseMessage> SendModel(HttpClient client, ModelSettings config, object payload, CancellationToken ct)
     {
         ModelEndpointPolicy.Ensure(config);
+        var tried = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        while (true)
+        {
+            using var slot = ModelEndpoints.Reserve(config, tried) ?? throw new UserError("Enter a model server URL.", 400);
+            await slot.WaitTurn(ct);
+            try
+            {
+                var response = await SendTo(client, config with { Endpoint = slot.Endpoint }, payload, ct);
+                ModelEndpoints.MarkUp(slot.Endpoint);
+                return response;
+            }
+            catch (HttpRequestException)
+            {
+                ModelEndpoints.MarkDown(slot.Endpoint);
+                tried.Add(slot.Endpoint);
+                if (ModelEndpoints.All(config).Any(e => !tried.Contains(e))) continue;
+                throw;
+            }
+        }
+    }
+
+    private static async Task<HttpResponseMessage> SendTo(HttpClient client, ModelSettings config, object payload, CancellationToken ct)
+    {
         var uri = new Uri(config.Endpoint);
         if (!config.Model.StartsWith("qwen", StringComparison.OrdinalIgnoreCase) || uri.Port != 11434)
             return await client.PostAsJsonAsync(config.Endpoint.TrimEnd('/') + "/chat/completions", payload, ct);
@@ -809,7 +890,4 @@ public sealed class DescriptionWorker(QueueStore store, IHttpClientFactory clien
         }
         throw new UserError("The model returned incomplete or invalid JSON. Its raw response was saved; retry this video.", 502);
     }
-    private sealed record DescriptionResult(string Description, string? Suspicious, string? Weapon, string Raw, double[] Timestamps, string? ModelName = null, bool NoPeople = false,
-        double? SuspiciousScore = null, string? ModelSuspicious = null, string? ScoreSource = null, ScreeningLog? Person = null,
-        double? NarrativeScore = null, double? ClassifierScore = null);
 }

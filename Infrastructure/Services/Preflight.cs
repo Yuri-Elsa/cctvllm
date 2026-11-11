@@ -7,7 +7,7 @@ public sealed record PreflightCheck(string Name, string Status, string Detail);
 
 public sealed record PreflightReport(DateTimeOffset CheckedAt, string Overall, IReadOnlyList<PreflightCheck> Checks);
 
-public sealed class Preflight(QueueStore store, VideoTools videos, RtspIngestService rtsp, IEnumerable<INotifier> notifiers,
+public sealed class Preflight(QueueStore store, VideoTools videos, RtspIngestService rtsp, IEnumerable<INotifier> notifiers, WorkerRegistry workers,
     IHttpClientFactory clients, IWebHostEnvironment env, UserStore users, ILogger<Preflight> logger) : BackgroundService
 {
     private readonly SemaphoreSlim gate = new(1, 1);
@@ -44,7 +44,9 @@ public sealed class Preflight(QueueStore store, VideoTools videos, RtspIngestSer
                 Guard("Python YOLO", () => CheckPython(ct)),
                 Guard("YOLO weights", () => Task.FromResult(CheckWeights())),
                 Guard("Face blur", () => Task.FromResult(CheckFaceBlur())),
-                Guard("Model server", () => CheckModel(ct)),
+                Guard("Model server", () => CheckModels(ct)),
+                Guard("Workers", () => Task.FromResult(CheckWorkers())),
+                Guard("Database", () => Task.FromResult(CheckDatabase())),
                 Guard("Data folder", () => Task.FromResult(CheckFolders())),
                 Guard("Notifiers", () => Task.FromResult(CheckNotifiers())),
                 Guard("Access", () => Task.FromResult(users.Enabled ? AccountsCheck(Environment.GetEnvironmentVariable("CCTV_URL")) : AccessCheck(new AuthOptions().Password, Environment.GetEnvironmentVariable("CCTV_URL")))));
@@ -118,10 +120,36 @@ public sealed class Preflight(QueueStore store, VideoTools videos, RtspIngestSer
             : new PreflightCheck(name, "warn", $"On, but the face detector model is missing ({model}). Only the head of each detected person is blurred.");
     }
 
-    private async Task<PreflightCheck> CheckModel(CancellationToken ct)
+    // One check for all configured model servers: ok when every one answers, warn when only some do, fail when none does.
+    private async Task<PreflightCheck> CheckModels(CancellationToken ct)
+    {
+        var endpoints = ModelEndpoints.All(store.Settings);
+        var results = await Task.WhenAll(endpoints.Select(e => CheckModel(e, ct)));
+        if (results.Length == 1) return results[0];
+        var status = results.All(r => r.Status == "ok") ? "ok" : results.Any(r => r.Status == "ok") ? "warn" : "fail";
+        var detail = string.Join(" | ", results.Select((r, i) => $"{endpoints[i]}: {r.Detail}"));
+        return new PreflightCheck("Model server", status, $"{results.Count(r => r.Status == "ok")} of {results.Length} servers ready. " + detail);
+    }
+
+    // Who analyses videos: this machine's workers (CCTV_WORKERS) and any remote workers that have asked for work lately.
+    private PreflightCheck CheckWorkers()
+    {
+        const string name = "Workers";
+        if (RemoteWorker.Enabled)
+            return new PreflightCheck(name, "ok", $"This is a worker for {RemoteWorker.CoordinatorUrl}: {RemoteWorker.Loops} at a time.");
+        var local = DescriptionWorker.LocalWorkers;
+        var remote = workers.Active(TimeSpan.FromSeconds(90)).ToList();
+        var accepting = WorkerApi.Enabled ? "accepting remote workers" : "remote workers off (set CCTV_WORKER_TOKEN)";
+        if (local == 0 && remote.Count == 0)
+            return new PreflightCheck(name, "warn", $"No worker: CCTV_WORKERS=0 here and no remote worker has connected ({accepting}). Videos will not be analysed.");
+        var seen = remote.Count == 0 ? "none seen lately" : string.Join(", ", remote.Select(w => w.Name));
+        return new PreflightCheck(name, "ok", $"{local} here at a time; remote: {seen} ({accepting}).");
+    }
+
+    private async Task<PreflightCheck> CheckModel(string endpoint, CancellationToken ct)
     {
         const string name = "Model server";
-        var settings = store.Settings;
+        var settings = store.Settings with { Endpoint = endpoint };
         const string label = "Ollama";
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(5));
@@ -165,6 +193,14 @@ public sealed class Preflight(QueueStore store, VideoTools videos, RtspIngestSer
         if (wanted.Length == 0) return false;
         var candidates = wanted.Contains(':') ? new[] { wanted } : new[] { wanted, wanted + ":latest" };
         return installed.Any(id => candidates.Contains(id, StringComparer.OrdinalIgnoreCase));
+    }
+
+    private PreflightCheck CheckDatabase()
+    {
+        const string name = "Database";
+        try { store.State.Ping(); }
+        catch (Exception ex) { return new PreflightCheck(name, "fail", $"{store.State.Description} cannot be used: {ex.Message}. Changes are kept in memory and lost on restart until it works again."); }
+        return new PreflightCheck(name, "ok", store.State.Description + (store.State is SqlServerStateStore ? " (reachable)" : " (state kept in a file; set CCTV_SQLSERVER to use SQL Server)"));
     }
 
     private PreflightCheck CheckFolders()

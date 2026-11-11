@@ -1,12 +1,13 @@
 using System.Text.Json;
 
-// JSON-backed development repository. It implements the ADS abstraction so an EF Core
+// In-memory repository that writes through to a state store (state.json, or SQL Server with CCTV_SQLSERVER). It implements the ADS abstraction so an EF Core
 // repository can replace it without changing controllers or processing services.
 public sealed class QueueStore : IQueueRepository
 {
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     private readonly object gate = new();
     private readonly string root;
+    private readonly IStateStore state;
     private List<VideoJob> items = [];
     private ModelSettings settings = new();
     private string? linkedFolder;
@@ -16,58 +17,24 @@ public sealed class QueueStore : IQueueRepository
     {
         root = Environment.GetEnvironmentVariable("CCTV_DATA_DIR") ?? Path.Combine(env.ContentRootPath, "data");
         Directory.CreateDirectory(root);
-        var statePath = Path.Combine(root, "state.json");
-        if (File.Exists(statePath))
+        state = StateStores.Create(root);
+        var saved = state.Load();      // a SQL Server that cannot be reached stops the start here, on purpose
+        if (saved is not null)
         {
-            try
-            {
-                var saved = JsonSerializer.Deserialize<StoredState>(File.ReadAllText(statePath), Json)
-                    ?? throw new JsonException("state.json is empty.");
-                settings = saved.Settings ?? new ModelSettings();
-                if (settings.Mode != "local") settings = settings with { Mode = "local", Endpoint = new ModelSettings().Endpoint };   // notebook mode was removed
-                linkedFolder = saved.LinkedFolder;
-                items = (saved.Jobs ?? []).Select(j => j.Status == "processing" ? j with { Status = "queued", Stage = "Queued after restart" } : j).ToList();
-            }
-            catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
-            {
-                // A damaged state file must not stop the app (and with it the cameras) from starting.
-                // Keep the damaged copy for inspection and start with an empty queue.
-                var backup = Path.Combine(root, $"state.corrupt-{DateTime.Now:yyyyMMdd-HHmmss}.json");
-                try { File.Copy(statePath, backup, true); } catch (IOException) { }
-                Console.Error.WriteLine($"state.json could not be read ({ex.Message}). A copy was kept as {backup}; starting with an empty queue.");
-                settings = new ModelSettings(); linkedFolder = null; items = [];
-            }
+            settings = saved.Settings ?? new ModelSettings();
+            if (settings.Mode != "local") settings = settings with { Mode = "local", Endpoint = new ModelSettings().Endpoint };   // notebook mode was removed
+            linkedFolder = saved.LinkedFolder;
+            items = (saved.Jobs ?? []).Select(j => j.Status == "processing" ? j with { Status = "queued", Stage = "Queued after restart", Worker = null, LeaseUntil = null } : j).ToList();
         }
     }
-    private DateTime lastSaveWarning = DateTime.MinValue;
+    public IStateStore State => state;
 
     public event Action? Changed;
 
     private void Persist()
     {
         Changed?.Invoke();
-        var temp = Path.Combine(root, "state.tmp");
-        var target = Path.Combine(root, "state.json");
-        var json = JsonSerializer.Serialize(new StoredState(settings, items) { LinkedFolder = linkedFolder }, Json);
-        // On Windows another process (antivirus, a sync client, the search indexer) can hold state.json open for a
-        // moment, and replacing it then fails with "Access to the path is denied". That is nearly always gone a
-        // moment later, so try a few times before giving up.
-        for (var attempt = 1; ; attempt++)
-        {
-            try { File.WriteAllText(temp, json); File.Move(temp, target, true); return; }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                if (attempt < 6) { Thread.Sleep(25 * (1 << (attempt - 1))); continue; }     // 25, 50, 100, 200, 400 ms
-                // Give up for now. The state is still in memory and every later change writes all of it again, so a
-                // video must not fail just because this one write did.
-                if (DateTime.UtcNow - lastSaveWarning > TimeSpan.FromSeconds(30))
-                {
-                    lastSaveWarning = DateTime.UtcNow;
-                    Console.Error.WriteLine($"state.json could not be saved ({ex.Message}). It will be written again on the next change.");
-                }
-                return;
-            }
-        }
+        state.Save(new StoredState(settings, items) { LinkedFolder = linkedFolder });
     }
     // The UI polls this every second or so, so it gets the list without the bulky parts nobody reads there:
     // the model's raw text and the per-sample person scores (hundreds per video). Export and the stored state keep them.
@@ -125,15 +92,83 @@ public sealed class QueueStore : IQueueRepository
     public bool Running { get { lock (gate) return running; } }
 
     public void SetRunning(bool value) { lock (gate) { running = value; Changed?.Invoke(); } }
-    public (VideoJob Job, ModelSettings Settings)? Take()
+    // The next video for a worker on this machine.
+    public (VideoJob Job, ModelSettings Settings)? Take() => TakeFor(null, TimeSpan.Zero);
+
+    // The next video for `worker` (a remote worker's name, or null for this machine). A remote worker gets a lease: it has to
+    // report in (Lease) before it runs out, or the video is queued again (RequeueExpired).
+    public (VideoJob Job, ModelSettings Settings)? TakeFor(string? worker, TimeSpan lease)
     {
         lock (gate)
         {
             if (!running) return null;
             var index = NextQueued();
-            if (index < 0) { running = false; return null; }
-            items[index] = items[index] with { Status = "processing", Stage = "Extracting frames", Error = null };
+            if (index < 0)
+            {
+                // With several workers, another one may still be busy with the last video: the queue is not "done" yet.
+                if (!items.Any(j => j.Status == "processing")) running = false;
+                return null;
+            }
+            items[index] = items[index] with
+            {
+                Status = "processing", Error = null,
+                Stage = worker is null ? "Extracting frames" : "Sent to worker",
+                Worker = worker, LeaseUntil = worker is null ? null : DateTimeOffset.UtcNow + lease
+            };
             Persist(); return (items[index], settings);
+        }
+    }
+
+    // The video `id` must be in progress on `worker`; otherwise the worker lost it (cancelled, removed, or its lease ran out
+    // and another worker has it) and has to stop.
+    public VideoJob Holding(string id, string worker)
+    {
+        lock (gate)
+        {
+            var job = Get(id);
+            if (job.Status != "processing" || job.Worker != worker)
+                throw new UserError("This video is no longer assigned to this worker.", 409);
+            return job;
+        }
+    }
+
+    // A worker's heartbeat: extends its lease and records where it is in the pipeline.
+    public void Lease(string id, string worker, TimeSpan lease, string? stage)
+    {
+        lock (gate)
+        {
+            var job = Holding(id, worker);
+            var index = items.FindIndex(j => j.Id == id);
+            var changed = !string.IsNullOrWhiteSpace(stage) && stage != job.Stage;
+            items[index] = job with { LeaseUntil = DateTimeOffset.UtcNow + lease, Stage = changed ? stage! : job.Stage };
+            if (changed) Persist();   // the lease alone is not worth a write: a restart queues the video again anyway
+        }
+    }
+
+    // Puts videos whose worker went silent back in the queue. Returns how many.
+    public int RequeueExpired(DateTimeOffset now)
+    {
+        lock (gate)
+        {
+            var count = 0;
+            for (var i = 0; i < items.Count; i++)
+            {
+                if (items[i].Status != "processing" || items[i].Worker is null || items[i].LeaseUntil is not { } until || until > now) continue;
+                items[i] = items[i] with { Status = "queued", Stage = "Queued (worker lost)", Worker = null, LeaseUntil = null };
+                count++;
+            }
+            if (count > 0) Persist();
+            return count;
+        }
+    }
+
+    // A worker that is shutting down hands its video back.
+    public void Release(string id, string worker)
+    {
+        lock (gate)
+        {
+            Holding(id, worker);
+            Update(id, j => j with { Status = "queued", Stage = "Queued (worker stopped)", Worker = null, LeaseUntil = null });
         }
     }
     private int NextQueued()

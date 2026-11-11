@@ -11,6 +11,10 @@
 		<None Remove="tests/**" />
 	</ItemGroup>
 	<ItemGroup>
+		<!-- Only needed with CCTV_SQLSERVER (found by name at run time). Pass -p:NoSqlClient=true to build without it. -->
+		<PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.2" Condition="'$(NoSqlClient)' != 'true'" />
+	</ItemGroup>
+	<ItemGroup>
 		<InternalsVisibleTo Include="CctvDemo.Tests" />
 	</ItemGroup>
 	<ItemGroup>

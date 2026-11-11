@@ -34,6 +34,9 @@ builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = 1024 * 1024)
 // address are used: the Secure cookie flag, the login throttle and the origin check all depend on them.
 // Only enable it when the app is reachable through the proxy alone, otherwise clients could spoof the headers.
 var trustProxy = Environment.GetEnvironmentVariable("CCTV_TRUST_PROXY") is "1" or "true";
+// A worker (CCTV_COORDINATOR_URL set) only analyses videos for a coordinator: no folder watching, cameras, retention,
+// notifications or health alerts of its own (see RemoteWorker).
+var workerMode = RemoteWorker.Enabled;
 if (trustProxy)
     builder.Services.Configure<ForwardedHeadersOptions>(o => {
         o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost;
@@ -75,15 +78,15 @@ builder.Services.AddSingleton(users);
 builder.Services.AddSingleton(sessions);
 builder.Services.AddSingleton(sp => new AuditLog(sp.GetRequiredService<QueueStore>().Root));
 builder.Services.AddOptions<HealthOptions>();
-builder.Services.AddHostedService<HealthMonitor>();
+if (!workerMode) builder.Services.AddHostedService<HealthMonitor>();
 builder.Services.AddSingleton<VideoTools>();
 builder.Services.AddOptions<WatchOptions>();
 builder.Services.AddSingleton<IVideoIngest, VideoIngestService>();
 builder.Services.AddOptions<RtspOptions>();
 builder.Services.AddSingleton<RtspIngestService>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<RtspIngestService>());
+if (!workerMode) builder.Services.AddHostedService(sp => sp.GetRequiredService<RtspIngestService>());
 builder.Services.AddSingleton<ScanCoordinator>();
-builder.Services.AddHostedService<FolderWatcherService>();
+if (!workerMode) builder.Services.AddHostedService<FolderWatcherService>();
 builder.Services.AddOptions<RetentionOptions>();
 builder.Services.AddHostedService<RetentionService>();
 builder.Services.AddHttpClient("model", c => c.Timeout = TimeSpan.FromMinutes(15));
@@ -101,15 +104,22 @@ builder.Services.AddSingleton(sp => new AlertJournal(
     sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<NotificationOptions>>().Value,
     sp.GetRequiredService<ILoggerFactory>().CreateLogger<AlertJournal>()));
 builder.Services.AddSingleton<NotificationDispatcher>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<NotificationDispatcher>());
+if (!workerMode) builder.Services.AddHostedService(sp => sp.GetRequiredService<NotificationDispatcher>());
 builder.Services.AddOptions<WatchdogOptions>();
-builder.Services.AddHostedService<CameraWatchdog>();
+if (!workerMode) builder.Services.AddHostedService<CameraWatchdog>();
 builder.Services.AddSingleton<Preflight>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<Preflight>());
 builder.Services.AddSingleton<INotificationAgent, LlmNotificationAgent>();
 builder.Services.AddSingleton<FlagNotifier>();
 builder.Services.AddSingleton<DescriptionWorker>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<DescriptionWorker>());
+builder.Services.AddSingleton<WorkerRegistry>();
+if (workerMode)
+    builder.Services.AddHostedService<RemoteWorker>();
+else
+{
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<DescriptionWorker>());
+    if (WorkerApi.Enabled) builder.Services.AddHostedService<LeaseReaper>();
+}
 var app = builder.Build();
 if (trustProxy) app.UseForwardedHeaders();
 var allowedHosts = HostGuard.Allowed(Environment.GetEnvironmentVariable("CCTV_URL"), Environment.GetEnvironmentVariable("CCTV_ALLOWED_HOSTS"));
@@ -181,6 +191,15 @@ static string SettingsDiff(ModelSettings before, ModelSettings after) => string.
     typeof(ModelSettings).GetProperties().Where(p => !Equals(p.GetValue(before), p.GetValue(after)))
         .Select(p => p.GetValue(after)?.ToString() is { Length: <= 60 } v ? $"{p.Name}={v}" : $"{p.Name} changed"));
 
+if (!workerMode && WorkerApi.Enabled) WorkerApi.Map(app);
+else if (!workerMode && !string.IsNullOrEmpty(WorkerApi.Token))
+    app.Logger.LogWarning("CCTV_WORKER_TOKEN is shorter than 24 characters, so remote workers are switched off.");
+app.MapGet("/api/workers", (WorkerRegistry registry) => new
+{
+    local = workerMode ? 0 : DescriptionWorker.LocalWorkers,
+    accepting = !workerMode && WorkerApi.Enabled,
+    remote = registry.All().Select(w => new { w.Name, w.LastSeen, w.JobId, active = DateTimeOffset.UtcNow - w.LastSeen <= TimeSpan.FromSeconds(90) })
+});
 app.MapGet("/api/state", (QueueStore s) => s.Snapshot());
 app.MapGet("/api/events", async (HttpContext http, QueueStore s) => {
     var ct = http.RequestAborted;
@@ -220,9 +239,9 @@ app.MapGet("/api/health", (Preflight p, HttpContext http) =>
 app.MapGet("/api/preflight", (bool? refresh, Preflight p, CancellationToken ct) => p.GetAsync(refresh == true, ct));
 app.MapGet("/api/models", async (string? endpoint, IHttpClientFactory clients, CancellationToken ct) => {
     if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) ||
-        uri.Scheme is not ("http" or "https") || !uri.IsLoopback ||
+        uri.Scheme is not ("http" or "https") || ModelEndpointPolicy.Check(endpoint) is not null ||
         !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
-        throw new UserError("Enter a localhost model server URL.", 400);
+        throw new UserError("Enter a model server URL on this machine, or one listed in CCTV_MODEL_HOSTS.", 400);
     using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
     timeout.CancelAfter(TimeSpan.FromSeconds(8));
     try
@@ -249,6 +268,10 @@ app.MapPost("/api/settings", (ModelSettings value, QueueStore s, HttpContext htt
     Need(http, "admin");
     if (value.Mode != "local") throw new UserError("Only Ollama (local) is supported.");
     if (ModelEndpointPolicy.Check(value.Endpoint) is { } endpointProblem) throw new UserError(endpointProblem);
+    var endpoints = ModelEndpoints.Parse(value.Endpoint, value.ExtraEndpoints);
+    if (endpoints.Count > ModelEndpoints.MaxEndpoints) throw new UserError($"At most {ModelEndpoints.MaxEndpoints} model servers.");
+    foreach (var extra in endpoints.Skip(1))
+        if (ModelEndpointPolicy.Check(extra) is { } extraProblem) throw new UserError(extra + ": " + extraProblem);
     if (string.IsNullOrWhiteSpace(value.Model)) throw new UserError("Enter a model name.");
     if (value.PersonDetector is not ("yolo" or "llm" or "hybrid")) throw new UserError("Choose YOLO, LLM or hybrid for person detection.");
     if (!(value.PersonThreshold is >= 0 and <= 1) || !(value.SuspiciousThreshold is >= 0 and <= 1) ||
@@ -259,7 +282,10 @@ app.MapPost("/api/settings", (ModelSettings value, QueueStore s, HttpContext htt
     if ((value.FlagActivity?.Length ?? 0) > 4000 || (value.SiteContext?.Length ?? 0) > 4000)
         throw new UserError("Criteria and context must each be 4,000 characters or less.");
     var before = s.Settings;
-    var after = value with { Endpoint = value.Endpoint.TrimEnd('/'), Model = (value.Model ?? "").Trim() };
+    var after = value with
+    {
+        Endpoint = value.Endpoint.TrimEnd('/'), ExtraEndpoints = string.Join("\n", endpoints.Skip(1)), Model = (value.Model ?? "").Trim()
+    };
     s.SetSettings(after);
     Log(http, "settings_changed", null, SettingsDiff(before, after));
     return Results.Ok(new { ok = true });

@@ -37,6 +37,10 @@ public sealed record VideoJob
     public bool BlurFaces { get; init; }
     public bool FacesBlurred { get; init; }
     public string? BlurError { get; init; }
+    // Set while a remote worker is analysing this video. The worker must report in before LeaseUntil, or the video goes
+    // back to the queue for another worker (see QueueStore.RequeueExpired).
+    public string? Worker { get; init; }
+    public DateTimeOffset? LeaseUntil { get; init; }
 }
 // LinkedFolder is a property rather than a constructor parameter so a state.json written
 // before this feature existed still deserializes, with the folder simply absent.

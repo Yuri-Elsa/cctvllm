@@ -34,6 +34,8 @@ jobs:
           pip install -r tracking/requirements.txt -r eval/requirements.txt
       - name: python -m unittest (tracking)
         run: python -m unittest discover -s tracking -p "test_live_logic.py" -v
+      - name: agent evaluation self-check
+        run: python eval/tests/test_agent_eval.py
       - name: python -m unittest (script suites)
         run: python -m unittest discover -s tests -p "test_python_scripts.py" -v
 

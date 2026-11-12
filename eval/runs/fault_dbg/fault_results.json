@@ -1,0 +1,35 @@
+[
+  {
+    "name": "baseline",
+    "checks": [
+      {
+        "name": "video selesai diproses (status completed)",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "video ditandai suspicious",
+        "ok": true,
+        "detail": "yes"
+      },
+      {
+        "name": "alert terkirim ke webhook tepat sekali",
+        "ok": true,
+        "detail": "jumlah=1"
+      },
+      {
+        "name": "jurnal alert kosong setelah terkirim",
+        "ok": true,
+        "detail": "[]"
+      },
+      {
+        "name": "job mencatat notifiedAt dan tanpa notifyError",
+        "ok": true,
+        "detail": "('2026-11-12T05:19:57.2485981+00:00', None)"
+      }
+    ],
+    "notes": [],
+    "error": null,
+    "seconds": 3.1473376750946045
+  }
+]

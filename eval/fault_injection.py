@@ -404,7 +404,9 @@ class Ctx:
         code, body = self.app.call("POST", "/api/settings", {
             "mode": "local", "endpoint": f"http://127.0.0.1:{self.model.port}/v1", "model": "mock-vlm",
             "personLabels": False, "personDetector": "llm", "personThreshold": 0.25, "suspiciousThreshold": 0.5,
-            "agentEnabled": self.agent_enabled, "weaponEnabled": True, "llmConcurrency": 2})
+            "agentEnabled": self.agent_enabled, "weaponEnabled": True, "llmConcurrency": 2,
+            # blur wajah (default aktif) butuh Python + dependensi tracking; uji ini sengaja tanpa Python
+            "blurFaces": False})
         assert code == 200, f"pengaturan ditolak: {code} {body}"
 
     def restart(self, how="kill"):

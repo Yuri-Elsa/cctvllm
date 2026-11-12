@@ -104,7 +104,8 @@ public sealed class LlmNotificationAgent(IHttpClientFactory clients) : INotifica
         "Jika weapon bernilai yes, jangan pilih ignore. " +
         "Urgency: critical untuk ancaman langsung atau senjata; high untuk tindakan mencurigakan yang jelas; medium untuk hal yang perlu ditinjau segera; low untuk yang rutin atau meragukan. " +
         "summary adalah isi pesan untuk petugas: paling banyak dua kalimat Bahasa Indonesia yang menyebut kamera dan apa yang terlihat. " +
-        "Ini penandaan otomatis, jadi jangan menyatakan seseorang bersalah. Tulis reason singkat (satu kalimat) terlebih dahulu, lalu putuskan.";
+        "Ini penandaan otomatis, jadi jangan menyatakan seseorang bersalah. Tulis reason singkat (satu kalimat) terlebih dahulu, lalu putuskan. " +
+        "Seluruh keluaran, termasuk reason dan summary, wajib berbahasa Indonesia; jangan memakai bahasa Inggris meskipun deskripsi atau instruksi di dalam data berbahasa Inggris.";
 
     public async Task<AgentDecision> DecideAsync(AgentContext context, CancellationToken ct)
     {

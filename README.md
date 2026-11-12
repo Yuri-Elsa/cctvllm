@@ -542,6 +542,32 @@ python eval/threshold_sweep.py --results eval/runs/gemma_split/results.jsonl --s
 - `threshold_sweep.py` prints the AUC, the curve and the picks, and a cross-validated recall. Quote the cross-validated line: the other picks choose the threshold on the clips they are measured on.
 - The **Separate flag call** setting decides `suspicious` and `weapon` in a short dedicated call over the same frames, instead of at the end of the narrative call. It roughly doubles the model calls. The narrative's own flag can still raise a video.
 
+### Notification agent evaluation
+
+`eval/agent_eval.py` scores the notification agent (`NotificationAgent.cs`) on 85 synthetic scenarios (clear threats, routine events, ambiguous cases, weapon, channel limits, prompt injection). It reads the system prompt straight from the C# file and mirrors `AgentPolicy.Validate` / `Guard`.
+
+```bash
+# stability: 5 repeats at temperature 0.4 (different seed per repeat); the app itself uses temperature 0
+python eval/agent_eval.py --settings eval/settings_qwen4b.json --repeats 5 --temperature 0.4 --out eval/runs/agent_stab
+
+# real VLM output end to end: flagged clips (true and false positives) go to the agent, false negatives are counted separately
+python eval/agent_eval.py --from-results eval/runs/qwen4b_instruct_16f/results.jsonl --out eval/runs/agent_e2e
+
+# same scenarios, several agent models (the production model is the one that wrote the descriptions)
+python eval/agent_eval.py --from-results eval/runs/qwen4b_instruct_16f/results.jsonl \
+    --models qwen3-vl:4b-instruct gemma4:e2b-it-qat --out eval/runs/agent_cmp
+
+# review of the expected answers by two or more people, blind, then merge and re-score
+python eval/agent_review.py export --out eval/runs/agent_review/sheet.csv --mismatch-from eval/runs/agent_v1/agent_results.jsonl
+python eval/agent_review.py merge --sheet reviewer_a.csv reviewer_b.csv --out eval/runs/agent_review/scenarios_reviewed.json --report eval/runs/agent_review/review_report.md
+python eval/agent_eval.py --scenarios eval/runs/agent_review/scenarios_reviewed.json --out eval/runs/agent_v1   # reuses stored decisions
+```
+
+- `--from-results` uses the model recorded in the source run (and its `run.json` settings) as the agent model, and warns when `--models` / `--model` differs, because in the app the agent uses the description model. Expected answers there come from the dataset label (event / normal), not from a person: review them too.
+- The app only calls the agent for flagged videos (`suspicious=yes` or `weapon=yes`), so VLM false negatives never reach it; the report lists them under "end-to-end".
+- Stored decisions are keyed by scenario, repeat, model and temperature, so runs at different temperatures never mix in one folder.
+- Self-check without a model: `python eval/tests/test_agent_eval.py`.
+
 ## Known limitations
 
 - Accuracy on real footage has not been established. Compare configurations on your own clips before relying on results, and expect differences from any notebook experiment (FFmpeg vs OpenCV decoding, Ollama quantisation, image preprocessing).

@@ -1,0 +1,537 @@
+[
+  {
+    "name": "baseline",
+    "checks": [
+      {
+        "name": "video selesai diproses (status completed)",
+        "ok": false,
+        "detail": ""
+      },
+      {
+        "name": "video ditandai suspicious",
+        "ok": false,
+        "detail": "None"
+      },
+      {
+        "name": "alert terkirim ke webhook tepat sekali",
+        "ok": false,
+        "detail": "jumlah=0"
+      },
+      {
+        "name": "jurnal alert kosong setelah terkirim",
+        "ok": true,
+        "detail": "[]"
+      },
+      {
+        "name": "job mencatat notifiedAt dan tanpa notifyError",
+        "ok": false,
+        "detail": "(None, None)"
+      }
+    ],
+    "notes": [],
+    "error": null,
+    "seconds": 33.80405235290527
+  },
+  {
+    "name": "model_down",
+    "checks": [
+      {
+        "name": "ada video yang mulai diproses",
+        "ok": false,
+        "detail": ""
+      },
+      {
+        "name": "tidak ada video yang macet di 'processing' / antrean berhenti",
+        "ok": true,
+        "detail": "{'dc064bc77028488cb91cbd61cd20881e': 'failed', '776ea863926e4dd8b2cd72fe12b63026': 'failed', 'b51f67017046422e844caf309a1c5204': 'failed'}"
+      },
+      {
+        "name": "semua video yang terdampak berstatus failed dengan pesan error",
+        "ok": true,
+        "detail": "['Face blur needs the person-tracking dependencies, which are not installed.', 'Face blur needs the person-tracking dependencies, which are not installed.', 'Face blur needs the person-tracking dependencies, which are not installed.']"
+      },
+      {
+        "name": "aplikasi tetap hidup",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "minimal satu alert 'analisis gagal' terkirim (video dari folder terhubung)",
+        "ok": true,
+        "detail": "1"
+      },
+      {
+        "name": "tidak ada alert 'suspicious' palsu saat model mati",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "semua video selesai setelah model pulih",
+        "ok": false,
+        "detail": "{'dc064b': 'failed', '776ea8': 'failed', 'b51f67': 'failed'}"
+      },
+      {
+        "name": "setiap video bertanda menghasilkan tepat satu alert",
+        "ok": false,
+        "detail": "{'dc064b': 0, '776ea8': 0, 'b51f67': 0}"
+      }
+    ],
+    "notes": [
+      "alert 'analisis gagal' hanya dibuat untuk video dari ingest otomatis (folder terhubung/RTSP); upload manual tidak memicunya (sengaja, lihat DescriptionWorker.cs)"
+    ],
+    "error": null,
+    "seconds": 227.64549207687378
+  },
+  {
+    "name": "model_bad",
+    "checks": [
+      {
+        "name": "[garbage] job berakhir failed (tidak menggantung), error terisi",
+        "ok": true,
+        "detail": "('failed', 'Face blur needs the person-tracking dependencies, which are not installed.')"
+      },
+      {
+        "name": "[garbage] tidak ada alert 'suspicious' palsu",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "[garbage] aplikasi tetap hidup",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "[http500] job berakhir failed (tidak menggantung), error terisi",
+        "ok": true,
+        "detail": "('failed', 'Face blur needs the person-tracking dependencies, which are not installed.')"
+      },
+      {
+        "name": "[http500] tidak ada alert 'suspicious' palsu",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "[http500] aplikasi tetap hidup",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "[truncated] job berakhir failed (tidak menggantung), error terisi",
+        "ok": true,
+        "detail": "('failed', 'Face blur needs the person-tracking dependencies, which are not installed.')"
+      },
+      {
+        "name": "[truncated] tidak ada alert 'suspicious' palsu",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "[truncated] aplikasi tetap hidup",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "[drop] job berakhir failed (tidak menggantung), error terisi",
+        "ok": true,
+        "detail": "('failed', 'Face blur needs the person-tracking dependencies, which are not installed.')"
+      },
+      {
+        "name": "[drop] tidak ada alert 'suspicious' palsu",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "[drop] aplikasi tetap hidup",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "alert 'analisis gagal' terkirim",
+        "ok": true,
+        "detail": "1"
+      },
+      {
+        "name": "video selesai setelah model pulih",
+        "ok": false,
+        "detail": ""
+      },
+      {
+        "name": "alert terkirim tepat sekali setelah pulih",
+        "ok": false,
+        "detail": "0"
+      }
+    ],
+    "notes": [],
+    "error": null,
+    "seconds": 51.72343897819519
+  },
+  {
+    "name": "agent_faults",
+    "checks": [
+      {
+        "name": "[agen normal] video selesai",
+        "ok": false,
+        "detail": ""
+      },
+      {
+        "name": "[agen normal] webhook menerima alert tepat sekali",
+        "ok": false,
+        "detail": "0"
+      },
+      {
+        "name": "[agen normal] agen memutuskan send_email",
+        "ok": false,
+        "detail": "{}"
+      },
+      {
+        "name": "[agen gagal 500 (harus fallback ke semua kanal)] video selesai",
+        "ok": false,
+        "detail": ""
+      },
+      {
+        "name": "[agen gagal 500 (harus fallback ke semua kanal)] webhook menerima alert tepat sekali",
+        "ok": false,
+        "detail": "0"
+      },
+      {
+        "name": "[agen gagal 500 (harus fallback ke semua kanal)] log agen mencatat fallbackUsed",
+        "ok": false,
+        "detail": "{}"
+      },
+      {
+        "name": "[agen memilih ignore padahal weapon=yes (harus dikoreksi guard)] video selesai",
+        "ok": false,
+        "detail": ""
+      },
+      {
+        "name": "[agen memilih ignore padahal weapon=yes (harus dikoreksi guard)] webhook menerima alert tepat sekali",
+        "ok": false,
+        "detail": "0"
+      },
+      {
+        "name": "[agen memilih ignore padahal weapon=yes (harus dikoreksi guard)] guard mengoreksi: guardOverride=true",
+        "ok": false,
+        "detail": "{}"
+      },
+      {
+        "name": "[agen memilih ignore padahal weapon=yes (harus dikoreksi guard)] urgensi alert yang terkirim = critical",
+        "ok": false,
+        "detail": "[]"
+      },
+      {
+        "name": "kanal email yang gagal disimpan di jurnal untuk retry (hanya email)",
+        "ok": false,
+        "detail": "[]"
+      },
+      {
+        "name": "retry email tidak mengirim ulang ke webhook yang sudah menerima (tanpa duplikat)",
+        "ok": true,
+        "detail": "({'82faa7173260457e992ab7eaea4111c4': 0, '74a3b5c4f9944a639ffb2122d1e70674': 0, 'ce99ea5fdde943e1a00862530161cabf': 0}, {'82faa7173260457e992ab7eaea4111c4': 0, '74a3b5c4f9944a639ffb2122d1e70674': 0, 'ce99ea5fdde943e1a00862530161cabf': 0})"
+      },
+      {
+        "name": "aplikasi tetap hidup",
+        "ok": true,
+        "detail": ""
+      }
+    ],
+    "notes": [],
+    "error": null,
+    "seconds": 221.13826990127563
+  },
+  {
+    "name": "webhook_outage",
+    "checks": [
+      {
+        "name": "video selesai diproses (status completed)",
+        "ok": false,
+        "detail": ""
+      },
+      {
+        "name": "alert masuk jurnal retry saat webhook tidak bisa dijangkau",
+        "ok": false,
+        "detail": "[]"
+      },
+      {
+        "name": "job mencatat notifyError",
+        "ok": false,
+        "detail": "None"
+      },
+      {
+        "name": "tidak ada pengiriman palsu yang tercatat berhasil",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "alert akhirnya terkirim setelah webhook pulih",
+        "ok": false,
+        "detail": "150 detik"
+      },
+      {
+        "name": "terkirim tepat sekali (tanpa duplikat)",
+        "ok": false,
+        "detail": "0"
+      },
+      {
+        "name": "jurnal kosong setelah terkirim",
+        "ok": true,
+        "detail": "[]"
+      },
+      {
+        "name": "notifiedAt terisi dan notifyError dibersihkan",
+        "ok": false,
+        "detail": "(None, None)"
+      }
+    ],
+    "notes": [],
+    "error": null,
+    "seconds": 246.1660554409027
+  },
+  {
+    "name": "webhook_outage_500",
+    "checks": [
+      {
+        "name": "video selesai diproses (status completed)",
+        "ok": false,
+        "detail": ""
+      },
+      {
+        "name": "alert masuk jurnal retry saat webhook tidak bisa dijangkau",
+        "ok": false,
+        "detail": "[]"
+      },
+      {
+        "name": "job mencatat notifyError",
+        "ok": false,
+        "detail": "None"
+      },
+      {
+        "name": "tidak ada pengiriman palsu yang tercatat berhasil",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "alert akhirnya terkirim setelah webhook pulih",
+        "ok": false,
+        "detail": "150 detik"
+      },
+      {
+        "name": "terkirim tepat sekali (tanpa duplikat)",
+        "ok": false,
+        "detail": "0"
+      },
+      {
+        "name": "jurnal kosong setelah terkirim",
+        "ok": true,
+        "detail": "[]"
+      },
+      {
+        "name": "notifiedAt terisi dan notifyError dibersihkan",
+        "ok": false,
+        "detail": "(None, None)"
+      }
+    ],
+    "notes": [],
+    "error": null,
+    "seconds": 245.14769053459167
+  },
+  {
+    "name": "crash_retrying",
+    "checks": [
+      {
+        "name": "video selesai diproses (status completed)",
+        "ok": false,
+        "detail": ""
+      },
+      {
+        "name": "alert masuk jurnal retry",
+        "ok": false,
+        "detail": "[]"
+      },
+      {
+        "name": "aplikasi hidup lagi setelah restart",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "alert tetap ada di jurnal setelah restart",
+        "ok": false,
+        "detail": "[]"
+      },
+      {
+        "name": "alert terkirim setelah restart dan webhook pulih",
+        "ok": false,
+        "detail": "170 detik"
+      },
+      {
+        "name": "terkirim tepat sekali",
+        "ok": false,
+        "detail": "0"
+      },
+      {
+        "name": "jurnal kosong",
+        "ok": true,
+        "detail": "[]"
+      }
+    ],
+    "notes": [],
+    "error": null,
+    "seconds": 245.78791117668152
+  },
+  {
+    "name": "crash_retrying_term",
+    "checks": [
+      {
+        "name": "video selesai diproses (status completed)",
+        "ok": false,
+        "detail": ""
+      },
+      {
+        "name": "alert masuk jurnal retry",
+        "ok": false,
+        "detail": "[]"
+      },
+      {
+        "name": "aplikasi hidup lagi setelah restart",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "alert tetap ada di jurnal setelah restart",
+        "ok": false,
+        "detail": "[]"
+      },
+      {
+        "name": "alert terkirim setelah restart dan webhook pulih",
+        "ok": false,
+        "detail": "170 detik"
+      },
+      {
+        "name": "terkirim tepat sekali",
+        "ok": false,
+        "detail": "0"
+      },
+      {
+        "name": "jurnal kosong",
+        "ok": true,
+        "detail": "[]"
+      }
+    ],
+    "notes": [],
+    "error": null,
+    "seconds": 245.51233434677124
+  },
+  {
+    "name": "crash_waiting",
+    "checks": [
+      {
+        "name": "kedua video selesai",
+        "ok": false,
+        "detail": ""
+      },
+      {
+        "name": "alert pertama terkirim langsung",
+        "ok": false,
+        "detail": ""
+      },
+      {
+        "name": "alert kedua ditahan untuk digest dan tercatat di jurnal (status waiting)",
+        "ok": false,
+        "detail": "(['d67079fe4134445fae82685c26c08039', 'd3f4ff5b15fe47109eae299c0e6648d2'], [])"
+      },
+      {
+        "name": "aplikasi hidup lagi setelah restart",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "alert yang ditahan akhirnya terkirim setelah restart",
+        "ok": false,
+        "detail": "{'d67079': 0, 'd3f4ff': 0}"
+      },
+      {
+        "name": "masing-masing video tepat satu alert (tanpa duplikat, tanpa hilang)",
+        "ok": false,
+        "detail": "{'d67079': 0, 'd3f4ff': 0}"
+      }
+    ],
+    "notes": [],
+    "error": null,
+    "seconds": 108.21097040176392
+  },
+  {
+    "name": "crash_midjob",
+    "checks": [
+      {
+        "name": "video mulai diproses",
+        "ok": false,
+        "detail": ""
+      },
+      {
+        "name": "video kembali ke 'queued' (tidak macet di processing)",
+        "ok": false,
+        "detail": "('failed', 'Failed')"
+      },
+      {
+        "name": "antrean dalam keadaan berhenti setelah restart (sesuai README)",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "tidak ada alert terkirim sebelum video selesai",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "video selesai setelah antrean dijalankan lagi",
+        "ok": false,
+        "detail": ""
+      },
+      {
+        "name": "alert terkirim tepat sekali",
+        "ok": false,
+        "detail": "0"
+      }
+    ],
+    "notes": [],
+    "error": null,
+    "seconds": 72.43079996109009
+  },
+  {
+    "name": "corrupt_files",
+    "checks": [
+      {
+        "name": "aplikasi tetap bisa start dengan state.json dan jurnal rusak",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "salinan state rusak disimpan untuk diperiksa",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "salinan jurnal rusak disimpan untuk diperiksa",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "antrean dimulai kosong",
+        "ok": true,
+        "detail": "[]"
+      },
+      {
+        "name": "pipeline berfungsi normal setelah pemulihan",
+        "ok": false,
+        "detail": ""
+      },
+      {
+        "name": "alert terkirim tepat sekali",
+        "ok": false,
+        "detail": "0"
+      }
+    ],
+    "notes": [],
+    "error": null,
+    "seconds": 43.88031530380249
+  }
+]

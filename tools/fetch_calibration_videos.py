@@ -49,7 +49,7 @@ def index_videos(roots):
 
 
 def read_wanted(manifest, splits, strata):
-    with open(manifest, newline="", encoding="utf-8") as f:
+    with open(manifest, newline="", encoding="utf-8-sig") as f:        # utf-8-sig: Excel/PowerShell may add a BOM
         rows = list(csv.DictReader(f))
     need = {"clip_id", "relative_path", "evaluation_split"}
     if not rows or need - set(rows[0]):
@@ -114,13 +114,30 @@ def main():
                     help="folder that may already hold some of the videos (repeatable); those are not downloaded again")
     ap.add_argument("--split", default="calibration", help="comma list of evaluation_split values, or 'all' (default: calibration)")
     ap.add_argument("--strata", default="main", help="comma list: main,person_optional, or 'all' (default: main)")
+    ap.add_argument("--labels", help="labels.csv of a person-detection run (eval/person_detection_eval.py): fetch exactly the videos "
+                    "it lists, whatever their split or stratum (--split and --strata are then ignored)")
     ap.add_argument("--dataset", default=DATASET)
     ap.add_argument("--dry-run", action="store_true", help="only list what would be downloaded")
     ap.add_argument("--kaggle-cmd", help="command that runs the Kaggle CLI (default: auto-detect; mainly for tests)")
     a = ap.parse_args()
 
     dest = Path(a.dest)
-    wanted = read_wanted(a.manifest, a.split.split(","), a.strata.split(","))
+    if a.labels:
+        with open(a.labels, newline="", encoding="utf-8-sig") as f:
+            head = f.readline()
+            f.seek(0)
+            delimiter = ";" if head.count(";") > head.count(",") else ","      # Excel with Indonesian regional settings
+            ids = {r["video_id"].strip() for r in csv.DictReader(f, delimiter=delimiter) if r.get("video_id")}
+        if not ids:
+            raise SystemExit(f"{a.labels} has no video_id column or no rows.")
+        wanted = [r for r in read_wanted(a.manifest, ["all"], ["all"]) if r["clip_id"] in ids]
+        unknown = ids - {r["clip_id"] for r in wanted}
+        if unknown:
+            print(f"warning: {len(unknown)} video_id(s) in the labels are not in the manifest: {', '.join(sorted(unknown)[:8])}",
+                  file=sys.stderr)
+        a.split, a.strata = "labels", "labels"
+    else:
+        wanted = read_wanted(a.manifest, a.split.split(","), a.strata.split(","))
     have = index_videos([dest, *a.also_search])
     todo = [r for r in wanted if video_key(r["relative_path"]) not in have and r["clip_id"] not in have]
     print(f"{len(wanted)} videos in the manifest for split={a.split} strata={a.strata}: "

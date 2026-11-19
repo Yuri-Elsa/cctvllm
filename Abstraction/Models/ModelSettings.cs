@@ -5,7 +5,7 @@ public sealed record ModelSettings(string Mode = "local", string Endpoint = "htt
     public string SiteContext { get; init; } = "";
     public bool WeaponEnabled { get; init; } = true;
     public bool BatchProcessing { get; init; }
-    public string PersonDetector { get; init; } = "yolo";
+    public string PersonDetector { get; init; } = "hybrid";
     public double PersonThreshold { get; init; } = 0.25;
     public double PersonVerifyLow { get; init; } = 0.10;
     public double HybridLlmThreshold { get; init; } = 0.5;

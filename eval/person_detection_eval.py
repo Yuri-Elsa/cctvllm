@@ -36,6 +36,7 @@ import random
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -301,6 +302,90 @@ def cmd_sample(a):
     print(f"{len(rows)} frames from {len({r['video_id'] for r in rows})} videos -> {out / 'labels.csv'}\n"
           "Fill has_person: 1 = at least one person visible (also far, small or partly hidden), 0 = nobody.\n"
           "Optional difficulty tag (e.g. small, partial, dark, crowd) enables the per-tag recall table.")
+
+
+# --------------------------------------------------------------------------- restore (frames lost, labels kept)
+
+def cmd_restore(a):
+    """Re-cut the frames named in labels.csv from the same videos, without touching labels.csv.
+
+    eval/runs/ is not in git, so a fresh clone has labels.csv but no frames/. `sample` must NOT be rerun: it draws new frames
+    and rewrites labels.csv. This command reproduces the exact frames instead: frame_id = <clip_id>_<timestamp in ms>, and
+    sample chose timestamps as lo + (i + 0.5) * (hi - lo) / per_video from the manifest, so each one is recomputed with the same
+    arithmetic, seeked with the same frame index and resized the same way."""
+    import cv2
+    labels = read_labels(a.labels, require_labels=False)
+    if not labels:
+        sys.exit(f"{a.labels} has no rows.")
+    root = Path(a.labels).parent
+    with open(a.manifest, newline="", encoding="utf-8") as f:
+        manifest = {r["clip_id"]: r for r in csv.DictReader(f)}
+    vroot = Path(a.video_root)
+    index = {}
+    for q in vroot.rglob("*"):
+        if q.is_file() and q.suffix.lower() in (".mp4", ".avi", ".mkv", ".mov", ".webm", ".m4v"):
+            index.setdefault(q.name.lower(), q)
+    todo = {}
+    for r in labels:
+        if not (root / r["path"]).is_file():
+            todo.setdefault(r["video_id"], []).append(r)
+    total = sum(len(v) for v in todo.values())
+    print(f"{total} frames missing from {len(todo)} videos ({len(labels) - total} already present)")
+    exact = approx = failed = 0
+    absent = []
+    for vid, rows in sorted(todo.items()):
+        m = manifest.get(vid)
+        video = None
+        if m:
+            rel = (m.get("relative_path") or "").replace("\\", "/")
+            video = (vroot / rel) if (vroot / rel).is_file() else index.get(Path(rel).name.lower())
+        if video is None:
+            absent.append(vid)
+            failed += len(rows)
+            continue
+        cap = cv2.VideoCapture(str(video))
+        if not cap.isOpened():
+            print(f"  cannot decode {video}", file=sys.stderr)
+            failed += len(rows)
+            continue
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        n = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0
+        duration = n / fps if n else float(m.get("end_sec") or 0)
+        lo = float(m.get("start_sec") or 0)
+        hi = min(float(m.get("end_sec") or duration), duration) if duration else float(m.get("end_sec") or 0)
+        candidates = {}
+        for i in range(a.per_video):
+            t = lo + (i + 0.5) * (hi - lo) / a.per_video
+            candidates[int(t * 1000)] = t
+        for r in rows:
+            ms = int(r["frame_id"].rsplit("_", 1)[1])
+            t = candidates.get(ms)
+            if t is None:                 # sampled with another --per-video: nearest reconstruction, reported below
+                t, approx_one = (ms + 0.5) / 1000, True
+            else:
+                approx_one = False
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(t * fps))
+            ok, frame = cap.read()
+            if not ok:
+                failed += 1
+                continue
+            h, w = frame.shape[:2]
+            sc = min(1, MAX_SIDE / max(h, w))
+            if sc < 1:
+                frame = cv2.resize(frame, (max(1, int(w * sc)), max(1, int(h * sc))), interpolation=cv2.INTER_AREA)
+            (root / r["path"]).parent.mkdir(parents=True, exist_ok=True)
+            cv2.imwrite(str(root / r["path"]), frame)
+            approx += approx_one
+            exact += not approx_one
+        cap.release()
+    if absent:
+        print(f"{len(absent)} videos not found under {vroot}: {', '.join(absent[:8])}{' ...' if len(absent) > 8 else ''}", file=sys.stderr)
+    print(f"restored {exact + approx} frames ({exact} exact, {approx} approximate), {failed} not restored")
+    if approx:
+        print(f"  {approx} frames did not match --per-video {a.per_video}; re-run with the value used for `sample` "
+              "(default 6) if you know it. Approximate frames can be one video frame off from the one that was labeled.", file=sys.stderr)
+    if failed:
+        sys.exit(1)
 
 
 # --------------------------------------------------------------------------- label (local browser tool)
@@ -593,11 +678,77 @@ def load_scores(path):
     return out
 
 
+MODELFILE = Path(__file__).resolve().parent.parent / "tools" / "Modelfile.qwen3-vl-4b-cctv"
+
+
+def installed_models(endpoint, api_key, timeout=15):
+    """Model names the server lists (OpenAI-compatible GET /models, which Ollama serves under /v1).
+    Returns None when the server answers but has no model list (some OpenAI-compatible servers do not)."""
+    req = urllib.request.Request(endpoint.rstrip("/") + "/models",
+                                 headers={**({"Authorization": f"Bearer {api_key}"} if api_key else {})})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return {m.get("id", "") for m in json.loads(r.read()).get("data", [])}
+    except urllib.error.HTTPError:
+        return None
+    except (urllib.error.URLError, ValueError, OSError) as e:
+        raise RuntimeError(f"cannot reach the model server at {endpoint}: {getattr(e, 'reason', e)}") from None
+
+
+def has_model(names, model):
+    return model in names or (":" not in model and f"{model}:latest" in names)
+
+
+def create_model(model):
+    """Same two steps as tools/setup-model.sh: pull the base model, then create `model` from the Modelfile."""
+    import shutil
+    import subprocess
+    if not shutil.which("ollama"):
+        sys.exit("--create-model needs the `ollama` command on this machine (install it from https://ollama.com).")
+    if not MODELFILE.is_file():
+        sys.exit(f"{MODELFILE} not found; cannot create {model}.")
+    print("Downloading the base model qwen3-vl:4b (a few GB the first time)...")
+    subprocess.run(["ollama", "pull", "qwen3-vl:4b"], check=True)
+    print(f"Creating {model} ...")
+    subprocess.run(["ollama", "create", model, "-f", str(MODELFILE)], check=True)
+
+
+def ensure_llm_model(a, api_key):
+    """Stop before scoring (not after hundreds of failed calls) when the LLM model is not on the server.
+    Runs even with --no-warmup, because a missing model fails every frame."""
+    try:
+        names = installed_models(a.endpoint, api_key)
+    except RuntimeError as e:
+        sys.exit(f"{e}\nStart Ollama and check --endpoint. Nothing was scored.")
+    if names is None or has_model(names, a.model):
+        return                      # no model list to check against: the warm-up call below still catches a 404
+    if a.create_model:
+        host = urllib.parse.urlparse(a.endpoint).hostname or ""
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            sys.exit(f"--create-model creates the model on THIS machine, but --endpoint is {a.endpoint}. "
+                     f"Create {a.model} on that server instead (tools/setup-model.sh).")
+        create_model(a.model)
+        if not has_model(installed_models(a.endpoint, api_key) or set(), a.model):
+            sys.exit(f"{a.model} still not listed by {a.endpoint} after creating it; check that the ollama command and "
+                     "--endpoint talk to the same server.")
+        return
+    listed = ", ".join(sorted(names)) or "(none)"
+    sys.exit(f"Model '{a.model}' is not installed on {a.endpoint}. Installed: {listed}\n"
+             f"Create it with `sh tools/setup-model.sh {a.model}` (or tools\\setup-model.bat), or add --create-model, "
+             "or pass an installed model with --model. Nothing was scored.")
+
+
 def cmd_score(a):
     labels = read_labels(a.labels)
     if not labels:
         sys.exit("No labeled frames: fill the has_person column (1 / 0) in labels.csv first, save it, then run score again.")
     root = Path(a.labels).parent
+    gone = [r for r in labels if not (root / r["path"]).is_file()]
+    if gone:                       # a missing image fails every call, and a rerun's failures are not counted as a streak
+        sys.exit(f"{len(gone)} of {len(labels)} labeled frames are missing on disk, e.g. {root / gone[0]['path']}\n"
+                 "The frames/ folder next to labels.csv is not in git (eval/runs/ is ignored): copy it from whoever made the labels. "
+                 "Do not run `sample` again to recreate it: that would draw new frames and overwrite the hand-made labels. "
+                 "Nothing was scored.")
     # only successful records count as done: failed frames are retried, and the newest record wins in `analyze`
     previous = load_scores(a.out)
     done = {k for k, v in previous.items() if v.get("score") is not None}
@@ -608,6 +759,8 @@ def cmd_score(a):
         yolo = YoloScorer(a.weights, a.device)
         scorers[f"yolo:{Path(a.weights).stem}"] = lambda p: (*yolo(p), None, None)
     if "llm" in detectors:
+        ensure_llm_model(a, api_key)
+
         def run_llm(p):
             t0 = time.perf_counter()
             s, ans, has = llm_score(a.endpoint, a.model, p, api_key, a.timeout)
@@ -1401,6 +1554,12 @@ def main(argv=None):
     s.add_argument("--seed", type=int, default=20260929)
     s.set_defaults(fn=cmd_sample)
 
+    rs = sub.add_parser("restore", help="re-cut the frames listed in labels.csv from the videos (frames/ lost); keeps the labels")
+    rs.add_argument("--labels", required=True)
+    rs.add_argument("--manifest", required=True, help="eval/manifest.csv")
+    rs.add_argument("--video-root", required=True)
+    rs.add_argument("--per-video", type=int, default=6, help="the --per-video used for `sample` (default 6)")
+    rs.set_defaults(fn=cmd_restore)
     lb = sub.add_parser("label", help="label frames in the browser (keyboard: 1 / 0), saves to labels.csv automatically")
     lb.add_argument("--labels", required=True)
     lb.add_argument("--port", type=int, default=8765)
@@ -1420,6 +1579,8 @@ def main(argv=None):
     c.add_argument("--model", default="qwen3-vl:4b-cctv")
     c.add_argument("--timeout", type=float, default=300)
     c.add_argument("--no-warmup", action="store_true")
+    c.add_argument("--create-model", action="store_true",
+                   help="if --model is not on the (local) server, create it from tools/Modelfile.qwen3-vl-4b-cctv first")
     c.set_defaults(fn=cmd_score)
 
     z = sub.add_parser("analyze", help="choose thresholds on calibration, evaluate on test, write the report")

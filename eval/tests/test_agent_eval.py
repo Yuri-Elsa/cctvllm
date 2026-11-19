@@ -156,4 +156,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main()dotnet test
+python -m pytest eval/tests
+python eval/fault_injection.py --out eval/runs/fault_after
+python eval/compare_runs.py ...   # bila ingin membandingkan dengan eval/runs/fault_v1

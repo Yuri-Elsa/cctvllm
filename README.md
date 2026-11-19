@@ -155,7 +155,7 @@ Open **http://127.0.0.1:8766**. The compose file runs the app and Ollama togethe
 | --------------------- | ------------------------------------------------------------------------------------------------------- |
 | Server URL / Model    | OpenAI-compatible endpoint; the model list is read from the server                                      |
 | Person labels (YOLO)  | Draw boxes and per-frame labels on the frames sent to the model                                         |
-| Person detector       | `YOLO` (default, fast), `Hybrid` (YOLO first, the vision model only checks doubtful frames) or `LLM` (asks the vision model about every frame; slowest) |
+| Person detector       | `Hybrid` (default: YOLO first, the vision model only checks doubtful frames), `YOLO` (fastest) or `LLM` (asks the vision model about every frame; slowest) |
 | Person threshold      | Minimum detection confidence, 0–1 (default 0.25). In Hybrid, YOLO frames at or above it skip the LLM; try 0.5 |
 | Hybrid: check below   | YOLO floor, 0–1 (default 0.10). Frames whose best box is under it are dropped; frames between it and the person threshold go to the LLM |
 | Hybrid: LLM threshold | Keep a doubtful frame when the LLM's `yes` probability reaches this, 0–1 (default 0.5)                  |
@@ -541,6 +541,10 @@ python eval/threshold_sweep.py --results eval/runs/gemma_split/results.jsonl --s
 - `run_app_eval.py` now records `suspicious_score`, `classifier_score`, `narrative_score`, `score_source` and `scene_mode`. Runs made before this have no scores and cannot be re-thresholded.
 - `threshold_sweep.py` prints the AUC, the curve and the picks, and a cross-validated recall. Quote the cross-validated line: the other picks choose the threshold on the clips they are measured on.
 - The **Separate flag call** setting decides `suspicious` and `weapon` in a short dedicated call over the same frames, instead of at the end of the narrative call. It roughly doubles the model calls. The narrative's own flag can still raise a video.
+
+### Office rollout
+
+To move from the UCF-Crime benchmark to your own cameras (connect, label, calibrate, decide on the person detector), see `docs/OFFICE-ROLLOUT.md`. `eval/office_manifest.py` turns a folder of labelled office clips into a manifest the scripts above accept. The current YOLO-versus-LLM decision and the rule for changing it are in `docs/PERSON-DETECTOR-DECISION.md`.
 
 ### Notification agent evaluation
 

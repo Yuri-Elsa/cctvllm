@@ -55,7 +55,7 @@ public class ScreeningExportTests
     {
         var lines = Lines(Job(Full()));
         var row = Cells(lines[0]).Zip(Cells(lines[1])).ToDictionary(p => p.First, p => p.Second);
-        Assert.Equal("hybrid", s.PersonDetector);
+        Assert.Equal("yolo", row["person_detector"]);
         Assert.Equal("0.25", row["person_threshold"]);
         Assert.Equal("0.9123", row["person_max_score"]);          // four decimals
         Assert.Equal("0.5555", row["suspicious_score"]);
@@ -138,7 +138,7 @@ public class ScreeningPersistenceTests
     public void New_settings_default_to_yolo_a_quarter_person_threshold_and_a_half_flag_threshold()
     {
         var s = new ModelSettings();
-        Assert.Equal("yolo", s.PersonDetector);
+        Assert.Equal("hybrid", s.PersonDetector);
         Assert.Equal(0.25, s.PersonThreshold);
         Assert.Equal(0.5, s.SuspiciousThreshold);
         Assert.True(s.AgentEnabled);

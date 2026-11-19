@@ -55,7 +55,7 @@ public class ScreeningExportTests
     {
         var lines = Lines(Job(Full()));
         var row = Cells(lines[0]).Zip(Cells(lines[1])).ToDictionary(p => p.First, p => p.Second);
-        Assert.Equal("yolo", row["person_detector"]);
+        Assert.Equal("hybrid", s.PersonDetector);
         Assert.Equal("0.25", row["person_threshold"]);
         Assert.Equal("0.9123", row["person_max_score"]);          // four decimals
         Assert.Equal("0.5555", row["suspicious_score"]);
@@ -149,7 +149,7 @@ public class ScreeningPersistenceTests
     {
         var old = JsonSerializer.Deserialize<ModelSettings>(
             """{"mode":"local","endpoint":"http://127.0.0.1:11434/v1","model":"m","personLabels":true,"flagActivity":"x"}""", Web)!;
-        Assert.Equal("yolo", old.PersonDetector);
+        Assert.Equal("hybrid", old.PersonDetector);
         Assert.Equal(0.25, old.PersonThreshold);
         Assert.Equal(0.5, old.SuspiciousThreshold);
         Assert.True(old.AgentEnabled);
